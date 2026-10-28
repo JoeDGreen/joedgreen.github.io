@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aura — accessible audio meetings</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 44rem; padding: 1rem; line-height: 1.5; }
+  h1, h2 { line-height: 1.25; }
+  label { display: block; font-weight: 600; margin-top: 1rem; }
+  input[type="text"], input[type="email"], input[type="password"] { width: 100%; font-size: 1.1rem; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
+  fieldset { margin-top: 1rem; }
+  fieldset label { font-weight: 400; margin-top: 0.4rem; }
+  button { font-size: 1.05rem; padding: 0.55rem 1rem; margin: 0.35rem 0.35rem 0.35rem 0; cursor: pointer; }
+  button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid #1a73e8; outline-offset: 2px; }
+  #joinButton { font-size: 1.2rem; font-weight: 700; }
+  .status { font-weight: 600; }
+  ul#participantList li { margin: 0.4rem 0; }
+  .speaking { font-weight: 700; }
+  #chatLog { border: 1px solid #888; border-radius: 6px; padding: 0.5rem 0.75rem; min-height: 8rem; max-height: 20rem; overflow-y: auto; }
+  #chatLog p { margin: 0.35rem 0; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .hint { color: #444; font-size: 0.95rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aura</h1>
+  <p>Audio meetings anyone can host. No video, no clutter — just talk, in high-quality sound, built to work with a screen reader.</p>
+</header>
+
+<main>
+  <!-- ============ JOIN VIEW ============ -->
+  <section id="joinView" aria-labelledby="joinHeading">
+    <h2 id="joinHeading">Join or create a room</h2>
+    <p id="setupWarning" class="status" role="alert" hidden>
+      This copy of Aura is not connected to a meeting server yet.
+      It needs a LiveKit server address and token endpoint in its settings before anyone can join.
+      If you are the person setting this up, see the README that comes with the project.
+    </p>
+    <section id="accountSection" aria-labelledby="accountHeading">
+      <h3 id="accountHeading">Your Aura account</h3>
+      <div id="signedOutBox">
+        <p>Anyone can join a room as a guest. To <strong>create and host</strong> a room, you need a free
+        account — that is how Aura knows the room is yours and gives you the host controls.
+        Your account keeps you signed in on this device: using Aura renews your sign-in,
+        so you only type your password again after 90 days away.</p>
+        <form id="loginForm">
+          <h4>Sign in</h4>
+          <label for="loginEmail">Email address</label>
+          <input type="email" id="loginEmail" autocomplete="email" required>
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" autocomplete="current-password" required>
+          <button type="submit">Sign in</button>
+          <p id="loginStatus" class="status" role="status"></p>
+        </form>
+        <form id="registerForm">
+          <h4>Create an account</h4>
+          <label for="regName">Display name (unique — this is the name people see)</label>
+          <input type="text" id="regName" autocomplete="name" required>
+          <label for="regEmail">Email address</label>
+          <input type="email" id="regEmail" autocomplete="email" required>
+          <label for="regPassword">Choose a password</label>
+          <input type="password" id="regPassword" autocomplete="new-password" required>
+          <button type="submit">Create my account</button>
+          <p id="registerStatus" class="status" role="status"></p>
+        </form>
+      </div>
+      <div id="signedInBox" hidden>
+        <p id="signedInText" class="status"></p>
+        <p><button type="button" id="signOutButton">Sign out</button></p>
+      </div>
+    </section>
+
+    <form id="joinForm">
+      <label for="nameInput">Your name (this is what people in the room will see)</label>
+      <input type="text" id="nameInput" name="name" autocomplete="name" required>
+
+      <label for="roomInput">Room name</label>
+      <input type="text" id="roomInput" name="room" required>
+      <p class="hint">Use the name of an existing room to join it, or type a new name to create a room.
+      Whoever creates a room is its host. The host can mute or remove people in that room.</p>
+
+      <label>
+        <input type="checkbox" id="hostCheckbox">
+        I am creating this room (make me the host)
+      </label>
+
+      <fieldset>
+        <legend>Audio quality</legend>
+        <label>
+          <input type="radio" name="quality" value="talk" checked>
+          Talk — best for conversation. Your microphone uses echo cancelling and noise suppression,
+          and the audio is sent at a clear voice bitrate.
+        </label>
+        <label>
+          <input type="radio" name="quality" value="hifi">
+          High quality — best for music and rich sound. All microphone processing is switched off and
+          the audio is sent in stereo at the highest bitrate. Use headphones in this mode to avoid feedback.
+        </label>
+      </fieldset>
+
+      <button type="submit" id="joinButton">Join the room</button>
+    </form>
+    <p id="joinStatus" class="status" role="status"></p>
+  </section>
+
+  <!-- ============ ROOM VIEW ============ -->
+  <section id="roomView" aria-labelledby="roomHeading" hidden>
+    <h2 id="roomHeading" tabindex="-1">Room</h2>
+    <p id="connectionStatus" class="status" role="status">Connecting…</p>
+
+    <p>
+      <button type="button" id="muteButton" aria-pressed="false">Mute my microphone</button>
+      <button type="button" id="leaveButton">Leave the room</button>
+    </p>
+
+    <h3>Invite people</h3>
+    <p>Send this link to anyone you want in the room. The link fills in the room name for them;
+    they just add their own name.</p>
+    <p><a id="inviteLink" href="#">Invite link for this room</a>
+    <button type="button" id="copyInviteButton">Copy invite link</button></p>
+
+    <h3 id="participantHeading">People in this room</h3>
+    <ul id="participantList" aria-labelledby="participantHeading"></ul>
+
+    <h3 id="chatHeading">Chat</h3>
+    <div id="chatLog" role="log" aria-labelledby="chatHeading" aria-live="off"></div>
+    <form id="chatForm">
+      <label for="chatInput">Type a chat message</label>
+      <input type="text" id="chatInput" name="chat" autocomplete="off">
+      <button type="submit">Send message</button>
+    </form>
+  </section>
+
+  <!-- Screen-reader announcements for joins, leaves, chat and host actions -->
+  <div id="announcer" class="sr-only" role="status" aria-live="polite"></div>
+  <div id="audioSink" aria-hidden="true"></div>
+</main>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  var cfg = window.AURA_CONFIG || {};
+  var TOKEN_ENDPOINT = (cfg.TOKEN_ENDPOINT || "").replace(/\/$/, "");
+  var LIVEKIT_URL = cfg.LIVEKIT_URL || "";
+
+  var joinView = document.getElementById("joinView");
+  var roomView = document.getElementById("roomView");
+  var joinForm = document.getElementById("joinForm");
+  var joinStatus = document.getElementById("joinStatus");
+  var nameInput = document.getElementById("nameInput");
+  var roomInput = document.getElementById("roomInput");
+  var hostCheckbox = document.getElementById("hostCheckbox");
+  var roomHeading = document.getElementById("roomHeading");
+  var connectionStatus = document.getElementById("connectionStatus");
+  var muteButton = document.getElementById("muteButton");
+  var leaveButton = document.getElementById("leaveButton");
+  var inviteLink = document.getElementById("inviteLink");
+  var copyInviteButton = document.getElementById("copyInviteButton");
+  var participantList = document.getElementById("participantList");
+  var chatLog = document.getElementById("chatLog");
+  var chatForm = document.getElementById("chatForm");
+  var chatInput = document.getElementById("chatInput");
+  var announcer = document.getElementById("announcer");
+  var audioSink = document.getElementById("audioSink");
+
+  // ---------- Accounts ----------
+  // The session token lives in localStorage. The server renews it on use
+  // (90-day sliding expiry), so regulars effectively stay signed in.
+  var sessionToken = "";
+  var accountName = "";
+  var accountEmail = "";
+  try {
+    sessionToken = window.localStorage.getItem("aura_session") || "";
+    accountName = window.localStorage.getItem("aura_name") || "";
+    accountEmail = window.localStorage.getItem("aura_email") || "";
+  } catch (e) { /* storage unavailable: guest mode only */ }
+
+  var signedOutBox = document.getElementById("signedOutBox");
+  var signedInBox = document.getElementById("signedInBox");
+  var signedInText = document.getElementById("signedInText");
+  var loginForm = document.getElementById("loginForm");
+  var registerForm = document.getElementById("registerForm");
+  var loginStatus = document.getElementById("loginStatus");
+  var registerStatus = document.getElementById("registerStatus");
+
+  function saveSession(token, name, email) {
+    sessionToken = token; accountName = name; accountEmail = email;
+    try {
+      window.localStorage.setItem("aura_session", token);
+      window.localStorage.setItem("aura_name", name);
+      window.localStorage.setItem("aura_email", email);
+    } catch (e) { /* non-fatal */ }
+    renderAccount();
+  }
+  function clearSession() {
+    sessionToken = ""; accountName = ""; accountEmail = "";
+    try {
+      window.localStorage.removeItem("aura_session");
+      window.localStorage.removeItem("aura_name");
+      window.localStorage.removeItem("aura_email");
+    } catch (e) { /* non-fatal */ }
+    renderAccount();
+  }
+  function renderAccount() {
+    if (sessionToken) {
+      signedOutBox.hidden = true;
+      signedInBox.hidden = false;
+      signedInText.textContent = "Signed in as " + accountName + " (" + accountEmail + "). You can create and host rooms.";
+      nameInput.value = accountName;
+      nameInput.readOnly = true;
+    } else {
+      signedOutBox.hidden = false;
+      signedInBox.hidden = true;
+      nameInput.readOnly = false;
+    }
+  }
+  function authCall(path, payload, statusEl, doneText) {
+    return fetch(TOKEN_ENDPOINT + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) throw new Error(data.error || ("server said " + res.status));
+        return data;
+      });
+    }).then(function (data) {
+      saveSession(data.sessionToken, data.displayName, data.email);
+      statusEl.textContent = doneText;
+      announce(doneText);
+    }).catch(function (err) {
+      statusEl.textContent = err.message;
+    });
+  }
+  loginForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    loginStatus.textContent = "Signing in…";
+    authCall("/auth/login", {
+      email: document.getElementById("loginEmail").value.trim(),
+      password: document.getElementById("loginPassword").value
+    }, loginStatus, "You are signed in.");
+  });
+  registerForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    registerStatus.textContent = "Creating your account…";
+    authCall("/auth/register", {
+      displayName: document.getElementById("regName").value.trim(),
+      email: document.getElementById("regEmail").value.trim(),
+      password: document.getElementById("regPassword").value
+    }, registerStatus, "Your account is ready and you are signed in.");
+  });
+  document.getElementById("signOutButton").addEventListener("click", function () {
+    clearSession();
+    announce("You are signed out. You can still join rooms as a guest.");
+  });
+  renderAccount();
+
+  // If arriving from an invite link (?room=Name), prefill the room name.
+  var params = new URLSearchParams(window.location.search);
+  var roomFromLink = params.get("room");
+  if (roomFromLink) { roomInput.value = roomFromLink; }
+
+  if (!TOKEN_ENDPOINT || !LIVEKIT_URL) {
+    document.getElementById("setupWarning").hidden = false;
+  }
+
+  var room = null;          // LiveKit Room
+  var myToken = "";         // kept so host actions can prove host rights to the server
+  var iAmHost = false;
+  var myName = "";
+  var roomName = "";
+  var speakingIds = {};     // identity -> true while speaking
+
+  function announce(text) {
+    announcer.textContent = "";
+    window.setTimeout(function () { announcer.textContent = text; }, 40);
+  }
+  function setStatus(text) { connectionStatus.textContent = text; }
+
+  function parseMetadata(p) {
+    try { return p.metadata ? JSON.parse(p.metadata) : {}; } catch (e) { return {}; }
+  }
+  function displayName(p) {
+    return p.name || p.identity || "Someone";
+  }
+
+  function renderParticipants() {
+    participantList.innerHTML = "";
+    if (!room) return;
+    var everyone = [room.localParticipant];
+    room.remoteParticipants.forEach(function (p) { everyone.push(p); });
+    everyone.forEach(function (p) {
+      var meta = parseMetadata(p);
+      var li = document.createElement("li");
+      var label = displayName(p);
+      if (p === room.localParticipant) label += " (you)";
+      if (meta.host) label += " (host)";
+      var micPub = p.getTrackPublication(LivekitClient.Track.Source.Microphone);
+      var muted = !micPub || micPub.isMuted;
+      label += muted ? " — microphone muted" : " — microphone on";
+      if (speakingIds[p.identity]) label += " — speaking now";
+      var span = document.createElement("span");
+      if (speakingIds[p.identity]) span.className = "speaking";
+      span.textContent = label;
+      li.appendChild(span);
+
+      // Host controls: only shown to the host, only for other people.
+      if (iAmHost && p !== room.localParticipant) {
+        var muteBtn = document.createElement("button");
+        muteBtn.type = "button";
+        muteBtn.textContent = "Mute " + displayName(p);
+        muteBtn.addEventListener("click", function () { moderate("mute", p); });
+        li.appendChild(document.createTextNode(" "));
+        li.appendChild(muteBtn);
+
+        var removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.textContent = "Remove " + displayName(p) + " from the room";
+        removeBtn.addEventListener("click", function () { moderate("remove", p); });
+        li.appendChild(document.createTextNode(" "));
+        li.appendChild(removeBtn);
+      }
+      participantList.appendChild(li);
+    });
+  }
+
+  function addChatLine(who, text) {
+    var p = document.createElement("p");
+    var strong = document.createElement("strong");
+    strong.textContent = who + ": ";
+    p.appendChild(strong);
+    p.appendChild(document.createTextNode(text));
+    chatLog.appendChild(p);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function moderate(action, participant) {
+    // Host actions are carried out by the token server, which first verifies
+    // that my token really carries host rights for this room.
+    if (!TOKEN_ENDPOINT) { announce("Host controls need the meeting server to be set up first."); return; }
+    fetch(TOKEN_ENDPOINT + "/moderate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + myToken },
+      body: JSON.stringify({ action: action, room: roomName, identity: participant.identity })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("server said " + res.status);
+      announce(action === "mute"
+        ? "You muted " + displayName(participant) + "."
+        : "You removed " + displayName(participant) + " from the room.");
+    }).catch(function () {
+      announce("That host action did not go through. The meeting server may still need its host controls switched on.");
+    });
+  }
+
+  joinForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    myName = nameInput.value.trim();
+    roomName = roomInput.value.trim();
+    iAmHost = hostCheckbox.checked;
+    var quality = document.querySelector('input[name="quality"]:checked').value;
+    if (!myName || !roomName) { joinStatus.textContent = "Please enter both your name and a room name."; return; }
+    if (!TOKEN_ENDPOINT || !LIVEKIT_URL) {
+      joinStatus.textContent = "This copy of Aura is not connected to a meeting server yet, so nobody can join. See the setup warning at the top of the page.";
+      return;
+    }
+    if (iAmHost && !sessionToken) {
+      joinStatus.textContent = "To create and host a room, sign in or create a free account first — it is at the top of this page. Guests can join rooms without an account.";
+      document.getElementById("accountHeading").setAttribute("tabindex", "-1");
+      document.getElementById("accountHeading").focus();
+      return;
+    }
+    joinStatus.textContent = "Connecting to room " + roomName + "…";
+    var url = TOKEN_ENDPOINT + "/token?room=" + encodeURIComponent(roomName)
+      + "&name=" + encodeURIComponent(myName) + (iAmHost ? "&host=1" : "");
+    var fetchOpts = sessionToken ? { headers: { "Authorization": "Bearer " + sessionToken } } : {};
+    fetch(url, fetchOpts)
+      .then(function (res) {
+        if (res.status === 401 && sessionToken) {
+          clearSession();
+          throw new Error("your sign-in had expired. Please sign in again at the top of the page, then join.");
+        }
+        if (!res.ok) throw new Error("token server said " + res.status);
+        return res.json();
+      })
+      .then(function (data) { myToken = data.token; return connect(data); })
+      .then(function () { enableMic(quality); })
+      .catch(function (err) {
+        joinStatus.textContent = "Could not join: " + err.message + ". Check your connection and try again.";
+      });
+  });
+
+  function connect(data) {
+    var LK = LivekitClient;
+    room = new LK.Room({ adaptiveStream: false, dynacast: false });
+    room
+      .on(LK.RoomEvent.ParticipantConnected, function (p) {
+        announce(displayName(p) + " joined the room.");
+        renderParticipants();
+      })
+      .on(LK.RoomEvent.ParticipantDisconnected, function (p) {
+        announce(displayName(p) + " left the room.");
+        renderParticipants();
+      })
+      .on(LK.RoomEvent.TrackMuted, function (pub, p) { renderParticipants(); })
+      .on(LK.RoomEvent.TrackUnmuted, function (pub, p) { renderParticipants(); })
+      .on(LK.RoomEvent.ActiveSpeakersChanged, function (speakers) {
+        speakingIds = {};
+        speakers.forEach(function (p) { speakingIds[p.identity] = true; });
+        renderParticipants();
+      })
+      .on(LK.RoomEvent.TrackSubscribed, function (track, pub, p) {
+        if (track.kind === LK.Track.Kind.Audio) {
+          var el = track.attach();
+          el.setAttribute("aria-hidden", "true");
+          audioSink.appendChild(el);
+        }
+        renderParticipants();
+      })
+      .on(LK.RoomEvent.TrackUnsubscribed, function (track) {
+        track.detach().forEach(function (el) { el.remove(); });
+        renderParticipants();
+      })
+      .on(LK.RoomEvent.DataReceived, function (payload, participant) {
+        try {
+          var msg = JSON.parse(new TextDecoder().decode(payload));
+          if (msg.type === "chat") {
+            var who = participant ? displayName(participant) : "Someone";
+            addChatLine(who, msg.text);
+            announce(who + " says: " + msg.text);
+          }
+        } catch (e) { /* ignore non-chat data */ }
+      })
+      .on(LK.RoomEvent.Disconnected, function () {
+        setStatus("Disconnected.");
+        announce("You have left the room.");
+        showJoinView();
+      });
+
+    return room.connect(data.url || LIVEKIT_URL, data.token).then(function () {
+      roomHeading.textContent = "Room: " + roomName;
+      setStatus("Connected to " + roomName + " as " + myName + (iAmHost ? " (you are the host)" : "") + ".");
+      var link = window.location.origin + window.location.pathname + "?room=" + encodeURIComponent(roomName);
+      inviteLink.href = link;
+      inviteLink.textContent = link;
+      joinView.hidden = true;
+      roomView.hidden = false;
+      roomHeading.focus();
+      renderParticipants();
+      announce("You are now in room " + roomName + ".");
+    });
+  }
+
+  function enableMic(quality) {
+    var hifi = quality === "hifi";
+    var capture = hifi
+      ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2 }
+      : { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+    // Opus is WebRTC's built-in audio codec. These publish options ask for the
+    // high end of it: 128 kbps stereo in high-quality mode, no DTX gaps, and
+    // redundant encoding so a lost packet does not become a lost word.
+    var publish = hifi
+      ? { audioPreset: { maxBitrate: 128000 }, dtx: false, red: true }
+      : { audioPreset: { maxBitrate: 64000 }, dtx: false, red: true };
+    room.localParticipant.setMicrophoneEnabled(true, capture, publish)
+      .then(function () {
+        muteButton.textContent = "Mute my microphone";
+        muteButton.setAttribute("aria-pressed", "false");
+        renderParticipants();
+      })
+      .catch(function () {
+        setStatus("Connected, but the microphone could not be started. Check the browser's microphone permission for this site.");
+      });
+  }
+
+  muteButton.addEventListener("click", function () {
+    if (!room) return;
+    var willMute = !(muteButton.getAttribute("aria-pressed") === "true");
+    room.localParticipant.setMicrophoneEnabled(!willMute).then(function () {
+      muteButton.textContent = willMute ? "Unmute my microphone" : "Mute my microphone";
+      muteButton.setAttribute("aria-pressed", String(willMute));
+      announce(willMute ? "Your microphone is muted." : "Your microphone is on.");
+      renderParticipants();
+    });
+  });
+
+  leaveButton.addEventListener("click", function () {
+    if (room) { room.disconnect(); }
+  });
+
+  copyInviteButton.addEventListener("click", function () {
+    var link = inviteLink.href;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(function () { announce("Invite link copied."); });
+    } else {
+      announce("Copy this link: " + link);
+    }
+  });
+
+  chatForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var text = chatInput.value.trim();
+    if (!text || !room) return;
+    var payload = new TextEncoder().encode(JSON.stringify({ type: "chat", text: text }));
+    room.localParticipant.publishData(payload, { reliable: true }).then(function () {
+      addChatLine(myName + " (you)", text);
+      chatInput.value = "";
+    });
+  });
+
+  function showJoinView() {
+    room = null;
+    roomView.hidden = true;
+    joinView.hidden = false;
+    chatLog.innerHTML = "";
+    participantList.innerHTML = "";
+    joinStatus.textContent = "";
+    document.getElementById("joinHeading").setAttribute("tabindex", "-1");
+    document.getElementById("joinHeading").focus();
+  }
+})();
+</script>
+</body>
+</html>
