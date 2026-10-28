@@ -19,8 +19,6 @@
   .status { font-weight: 600; }
   ul#participantList li { margin: 0.4rem 0; }
   .speaking { font-weight: 700; }
-  #chatLog { border: 1px solid #888; border-radius: 6px; padding: 0.5rem 0.75rem; min-height: 8rem; max-height: 20rem; overflow-y: auto; }
-  #chatLog p { margin: 0.35rem 0; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .hint { color: #444; font-size: 0.95rem; }
 </style>
@@ -207,16 +205,9 @@
     <h3 id="participantHeading">People in this room</h3>
     <ul id="participantList" aria-labelledby="participantHeading"></ul>
 
-    <h3 id="chatHeading">Chat</h3>
-    <div id="chatLog" role="log" aria-labelledby="chatHeading" aria-live="off"></div>
-    <form id="chatForm">
-      <label for="chatInput">Type a chat message</label>
-      <input type="text" id="chatInput" name="chat" autocomplete="off">
-      <button type="submit">Send message</button>
-    </form>
   </section>
 
-  <!-- Screen-reader announcements for joins, leaves, chat and host actions -->
+  <!-- Screen-reader announcements for joins, leaves and host actions -->
   <div id="announcer" class="sr-only" role="status" aria-live="polite"></div>
   <div id="audioSink" aria-hidden="true"></div>
 </main>
@@ -244,9 +235,6 @@
   var inviteLink = document.getElementById("inviteLink");
   var copyInviteButton = document.getElementById("copyInviteButton");
   var participantList = document.getElementById("participantList");
-  var chatLog = document.getElementById("chatLog");
-  var chatForm = document.getElementById("chatForm");
-  var chatInput = document.getElementById("chatInput");
   var announcer = document.getElementById("announcer");
   var audioSink = document.getElementById("audioSink");
 
@@ -499,6 +487,7 @@
   var room = null;          // LiveKit Room
   var myToken = "";         // kept so host actions can prove host rights to the server
   var iAmHost = false;
+  var iAmCohost = false;
   var myName = "";
   var roomName = "";
   var speakingIds = {};     // identity -> true while speaking
@@ -529,6 +518,7 @@
       var label = displayName(p);
       if (p === room.localParticipant) label += " (you)";
       if (meta.host) label += " (host)";
+      if (meta.cohost) label += " (co-host)";
       var micPub = p.getTrackPublication(LivekitClient.Track.Source.Microphone);
       var muted = !micPub || micPub.isMuted;
       label += muted ? " — microphone muted" : " — microphone on";
@@ -538,8 +528,10 @@
       span.textContent = label;
       li.appendChild(span);
 
-      // Host controls: only shown to the host, only for other people.
-      if (iAmHost && p !== room.localParticipant) {
+      // Moderation controls. The host can mute/remove anyone and manage
+      // co-hosts. A co-host can mute/remove regular participants only.
+      var canMod = (iAmHost || iAmCohost) && p !== room.localParticipant && !meta.host && (iAmHost || !meta.cohost);
+      if (canMod) {
         var muteBtn = document.createElement("button");
         muteBtn.type = "button";
         muteBtn.textContent = "Mute " + displayName(p);
@@ -554,18 +546,18 @@
         li.appendChild(document.createTextNode(" "));
         li.appendChild(removeBtn);
       }
+      if (iAmHost && p !== room.localParticipant && !meta.host) {
+        var cohostBtn = document.createElement("button");
+        cohostBtn.type = "button";
+        cohostBtn.textContent = meta.cohost
+          ? "Remove " + displayName(p) + " as co-host"
+          : "Make " + displayName(p) + " a co-host";
+        cohostBtn.addEventListener("click", function () { moderate(meta.cohost ? "demote" : "promote", p); });
+        li.appendChild(document.createTextNode(" "));
+        li.appendChild(cohostBtn);
+      }
       participantList.appendChild(li);
     });
-  }
-
-  function addChatLine(who, text) {
-    var p = document.createElement("p");
-    var strong = document.createElement("strong");
-    strong.textContent = who + ": ";
-    p.appendChild(strong);
-    p.appendChild(document.createTextNode(text));
-    chatLog.appendChild(p);
-    chatLog.scrollTop = chatLog.scrollHeight;
   }
 
   function moderate(action, participant) {
@@ -578,11 +570,16 @@
       body: JSON.stringify({ action: action, room: roomName, identity: participant.identity })
     }).then(function (res) {
       if (!res.ok) throw new Error("server said " + res.status);
-      announce(action === "mute"
-        ? "You muted " + displayName(participant) + "."
-        : "You removed " + displayName(participant) + " from the room.");
+      var msgs = {
+        mute: "You muted " + displayName(participant) + ".",
+        remove: "You removed " + displayName(participant) + " from the room.",
+        promote: displayName(participant) + " is now a co-host.",
+        demote: displayName(participant) + " is no longer a co-host."
+      };
+      announce(msgs[action] || "Done.");
+      renderParticipants();
     }).catch(function () {
-      announce("That host action did not go through. The meeting server may still need its host controls switched on.");
+      announce("That host action did not go through. Please try again.");
     });
   }
 
@@ -645,7 +642,7 @@ joinForm.addEventListener("submit", function (ev) {
             return data;
           });
         })
-        .then(function (data) { myToken = data.token; return connect(data); })
+        .then(function (data) { myToken = data.token; iAmHost = !!data.host; iAmCohost = !!data.cohost; return connect(data); })
         .then(function () { enableMic(quality); })
         .catch(function (err) {
           joinStatus.textContent = "Could not join: " + err.message;
@@ -697,6 +694,19 @@ joinForm.addEventListener("submit", function (ev) {
         announce(displayName(p) + " left the room.");
         renderParticipants();
       })
+      .on(LK.RoomEvent.ParticipantMetadataChanged, function (prevMeta, p) {
+        if (p === room.localParticipant) {
+          var nowMeta = parseMetadata(p);
+          if (nowMeta.cohost && !iAmCohost) {
+            iAmCohost = true;
+            announce("You are now a co-host of this room. You can mute or remove people if needed.");
+          } else if (!nowMeta.cohost && iAmCohost) {
+            iAmCohost = false;
+            announce("You are no longer a co-host of this room.");
+          }
+        }
+        renderParticipants();
+      })
       .on(LK.RoomEvent.TrackMuted, function (pub, p) { renderParticipants(); })
       .on(LK.RoomEvent.TrackUnmuted, function (pub, p) { renderParticipants(); })
       .on(LK.RoomEvent.ActiveSpeakersChanged, function (speakers) {
@@ -716,16 +726,6 @@ joinForm.addEventListener("submit", function (ev) {
         track.detach().forEach(function (el) { el.remove(); });
         renderParticipants();
       })
-      .on(LK.RoomEvent.DataReceived, function (payload, participant) {
-        try {
-          var msg = JSON.parse(new TextDecoder().decode(payload));
-          if (msg.type === "chat") {
-            var who = participant ? displayName(participant) : "Someone";
-            addChatLine(who, msg.text);
-            announce(who + " says: " + msg.text);
-          }
-        } catch (e) { /* ignore non-chat data */ }
-      })
       .on(LK.RoomEvent.Disconnected, function () {
         setStatus("Disconnected.");
         announce("You have left the room.");
@@ -734,7 +734,7 @@ joinForm.addEventListener("submit", function (ev) {
 
     return room.connect(data.url || LIVEKIT_URL, data.token).then(function () {
       roomHeading.textContent = "Room: " + fmtNum(roomName);
-      setStatus("Connected to " + fmtNum(roomName) + " as " + myName + (iAmHost ? " (you are the host)" : "") + ".");
+      setStatus("Connected to " + fmtNum(roomName) + " as " + myName + (iAmHost ? " (you are the host)" : (iAmCohost ? " (you are a co-host)" : "")) + ".");
       var link = window.location.origin + window.location.pathname + "?room=" + encodeURIComponent(roomName) + (joinedPasscode ? "&p=" + encodeURIComponent(joinedPasscode) : "");
       inviteLink.href = link;
       inviteLink.textContent = link;
@@ -792,22 +792,10 @@ joinForm.addEventListener("submit", function (ev) {
     }
   });
 
-  chatForm.addEventListener("submit", function (ev) {
-    ev.preventDefault();
-    var text = chatInput.value.trim();
-    if (!text || !room) return;
-    var payload = new TextEncoder().encode(JSON.stringify({ type: "chat", text: text }));
-    room.localParticipant.publishData(payload, { reliable: true }).then(function () {
-      addChatLine(myName + " (you)", text);
-      chatInput.value = "";
-    });
-  });
-
   function showJoinView() {
     room = null;
     roomView.hidden = true;
     joinView.hidden = false;
-    chatLog.innerHTML = "";
     participantList.innerHTML = "";
     joinStatus.textContent = "";
     document.getElementById("joinHeading").setAttribute("tabindex", "-1");
