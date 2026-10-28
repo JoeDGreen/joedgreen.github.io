@@ -84,6 +84,12 @@
         account and never changes, so you never have to type it.</p>
         <p><button type="button" id="hostPersonalButton">Host my personal room</button>
         <button type="button" id="copyPersonalLinkButton">Copy my invite link</button></p>
+        <p><button type="button" id="createRoomButton">Create a brand-new room</button></p>
+        <p class="hint">A brand-new room gets a fresh 9-digit number for a one-off meeting —
+        for people you do not want to give your personal number to. Aura tells you the
+        number and puts you straight in as host.</p>
+        <label for="hostPasscode">Passcode for a room you host (optional — numbers only, 4 to 10 digits). Guests will need it to join. On your personal room, Aura remembers it.</label>
+        <input type="text" id="hostPasscode" inputmode="numeric" autocomplete="off">
         <p id="personalRoomStatus" class="status" role="status"></p>
       </div>
     </section>
@@ -95,32 +101,11 @@
       <label for="roomInput">Meeting number (or an older room name)</label>
       <input type="text" id="roomInput" name="room" inputmode="numeric">
       <p class="hint">Only needed when you are joining someone else's meeting: type its
-      9-digit number — spaces are fine. Hosting your own personal room? Use the
-      "Host my personal room" button above instead; no typing needed.</p>
+      9-digit number — spaces are fine. Hosting? Use the buttons above instead;
+      no typing needed.</p>
 
       <label for="passcodeInput">Meeting passcode (only if the host set one)</label>
       <input type="text" id="passcodeInput" inputmode="numeric" autocomplete="off">
-
-      <p class="choice">
-        <input type="checkbox" id="hostCheckbox">
-        <label for="hostCheckbox">I am creating this room (make me the host)</label>
-      </p>
-
-      <div id="hostOptions" hidden>
-        <fieldset>
-          <legend>Which room are you hosting?</legend>
-          <p class="choice">
-            <input type="radio" id="hostKindPersonal" name="hostKind" value="personal" checked>
-            <label for="hostKindPersonal">My personal room — your number is <span id="personalNumberLabel">shown here once you sign in</span>, and it never changes</label>
-          </p>
-          <p class="choice">
-            <input type="radio" id="hostKindNew" name="hostKind" value="new">
-            <label for="hostKindNew">A brand-new room (Aura gives it a fresh 9-digit number)</label>
-          </p>
-        </fieldset>
-        <label for="hostPasscode">Passcode for this room (optional — numbers only, 4 to 10 digits). Guests will need it to join.</label>
-        <input type="text" id="hostPasscode" inputmode="numeric" autocomplete="off">
-      </div>
 
       <fieldset>
         <legend>Audio quality</legend>
@@ -260,7 +245,6 @@
   var joinStatus = document.getElementById("joinStatus");
   var nameInput = document.getElementById("nameInput");
   var roomInput = document.getElementById("roomInput");
-  var hostCheckbox = document.getElementById("hostCheckbox");
   var roomHeading = document.getElementById("roomHeading");
   var connectionStatus = document.getElementById("connectionStatus");
   var muteButton = document.getElementById("muteButton");
@@ -388,8 +372,6 @@
   }
   function joinPendingInvite() {
     if (!window.__pendingInviteRoom) return;
-    hostCheckbox.checked = false;
-    document.getElementById("hostOptions").hidden = true;
     joinStatus.textContent = "Joining the meeting you were invited to\u2026";
     joinForm.requestSubmit();
   }
@@ -516,9 +498,6 @@
     var regBtn = registerForm.querySelector('button[type="submit"]');
     if (regBtn) regBtn.textContent = "Create account and join the meeting";
   }
-  hostCheckbox.addEventListener("change", function () {
-    document.getElementById("hostOptions").hidden = !hostCheckbox.checked;
-  });
 
   if (!TOKEN_ENDPOINT || !LIVEKIT_URL) {
     document.getElementById("setupWarning").hidden = false;
@@ -669,16 +648,21 @@
   }
 
   var pendingRecording = null;
+  var pendingHostRoom = null; // "personal" | "new" when a hosting button started this submit
   var joinedPasscode = "";
     document.getElementById("hostPersonalButton").addEventListener("click", function () {
     var st = document.getElementById("personalRoomStatus");
     if (!sessionToken) { st.textContent = "Sign in first, at the top of the page."; return; }
     if (!personalNumber) { st.textContent = "Your personal number is still loading \u2014 give it a second and try again."; return; }
-    hostCheckbox.checked = true;
-    document.getElementById("hostOptions").hidden = false;
-    var pr = document.querySelector('input[name="hostKind"][value="personal"]');
-    if (pr) pr.checked = true;
+    pendingHostRoom = "personal";
     st.textContent = "Opening your personal room\u2026";
+    joinForm.requestSubmit();
+  });
+  document.getElementById("createRoomButton").addEventListener("click", function () {
+    var st = document.getElementById("personalRoomStatus");
+    if (!sessionToken) { st.textContent = "Sign in first, at the top of the page."; return; }
+    pendingHostRoom = "new";
+    st.textContent = "Creating your brand-new room\u2026";
     joinForm.requestSubmit();
   });
   document.getElementById("copyPersonalLinkButton").addEventListener("click", function () {
@@ -693,7 +677,9 @@
 joinForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
     myName = nameInput.value.trim();
-    iAmHost = hostCheckbox.checked;
+    var hostKindChoice = pendingHostRoom;
+    pendingHostRoom = null;
+    iAmHost = !!hostKindChoice;
     var quality = document.querySelector('input[name="quality"]:checked').value;
     var guestPasscode = document.getElementById("passcodeInput").value.trim();
     var hostPasscode = document.getElementById("hostPasscode").value.trim();
@@ -737,8 +723,7 @@ joinForm.addEventListener("submit", function (ev) {
     }
 
     if (iAmHost) {
-      var kindEl = document.querySelector('input[name="hostKind"]:checked');
-      var kind = kindEl ? kindEl.value : "personal";
+      var kind = hostKindChoice || "personal";
       if (kind === "new") {
         joinStatus.textContent = "Creating your new room\u2026";
         fetch(TOKEN_ENDPOINT + "/rooms", {
@@ -759,7 +744,7 @@ joinForm.addEventListener("submit", function (ev) {
       } else if (personalNumber) {
         requestToken(personalNumber, hostPasscode);
       } else {
-        joinStatus.textContent = "Your personal number is still loading — give it a second and try again, or choose a brand-new room.";
+        joinStatus.textContent = "Your personal number is still loading — give it a second and try again, or use the Create a brand-new room button.";
       }
     } else {
       var typed = roomInput.value.trim();
