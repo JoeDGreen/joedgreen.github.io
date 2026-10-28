@@ -192,8 +192,9 @@
     <p id="connectionStatus" class="status" role="status">Connecting…</p>
 
     <p>
-      <button type="button" id="muteButton" aria-pressed="false">Mute my microphone</button>
-      <button type="button" id="leaveButton">Leave the room</button>
+      <button type="button" id="muteButton" aria-pressed="false" aria-keyshortcuts="Alt+A">Mute my microphone</button>
+      <button type="button" id="handButton" aria-pressed="false" aria-keyshortcuts="Alt+Y">Raise my hand</button>
+      <button type="button" id="leaveButton" aria-keyshortcuts="Alt+Q">Leave the room</button>
       <button type="button" id="endForAllButton" hidden>End meeting for everyone</button>
     </p>
 
@@ -203,19 +204,35 @@
     <p><a id="inviteLink" href="#">Invite link for this room</a>
     <button type="button" id="copyInviteButton">Copy invite link</button></p>
 
+    <p id="muteAllControls" hidden>
+      <button type="button" id="muteAllButton" aria-keyshortcuts="Alt+M">Mute everyone's microphones</button>
+    </p>
+
     <h3 id="participantHeading">People in this room</h3>
     <ul id="participantList" aria-labelledby="participantHeading"></ul>
 
     <h3 id="recordingHeading">Recording</h3>
     <p id="recordingStatus" role="status">Recording is off.</p>
     <p id="recordControls" hidden>
-      <button type="button" id="recordButton">Start recording</button>
+      <button type="button" id="recordButton" aria-keyshortcuts="Alt+R">Start recording</button>
     </p>
     <div id="deliverySettings" hidden>
       <div class="choice"><input type="radio" id="delHost" name="recDelivery" value="host"> <label for="delHost">Send the finished recording to just me, the host</label></div>
       <div class="choice"><input type="radio" id="delCohosts" name="recDelivery" value="cohosts"> <label for="delCohosts">Send it to me and the co-hosts</label></div>
       <div class="choice"><input type="radio" id="delEveryone" name="recDelivery" value="everyone"> <label for="delEveryone">Send it to everyone in the room who has an account</label></div>
     </div>
+    <div id="entrySettings" hidden>
+      <div class="choice"><input type="checkbox" id="muteOnEntryBox"> <label for="muteOnEntryBox">People join with their microphones muted (they can unmute themselves whenever they are ready)</label></div>
+    </div>
+
+    <h3>Keyboard shortcuts</h3>
+    <ul>
+      <li>Mute or unmute yourself: Alt+A on Windows; Option+A or Command+A on Mac</li>
+      <li>Raise or lower your hand: Alt+Y on Windows; Option+Y or Command+Y on Mac</li>
+      <li>Leave the room: Alt+Q on Windows; Option+Q on Mac (Command+Q belongs to the browser itself — it quits the browser, so it cannot be used here)</li>
+      <li>Mute everyone's microphones (host and co-hosts): Alt+M on Windows; Option+M on Mac</li>
+      <li>Start or stop recording (host and co-hosts): Alt+R on Windows; Option+R on Mac</li>
+    </ul>
 
   </section>
 
@@ -248,6 +265,11 @@
   var recordingStatus = document.getElementById("recordingStatus");
   var deliverySettings = document.getElementById("deliverySettings");
   var endForAllButton = document.getElementById("endForAllButton");
+  var handButton = document.getElementById("handButton");
+  var muteAllButton = document.getElementById("muteAllButton");
+  var muteAllControls = document.getElementById("muteAllControls");
+  var muteOnEntryBox = document.getElementById("muteOnEntryBox");
+  var entrySettings = document.getElementById("entrySettings");
   var leaveButton = document.getElementById("leaveButton");
   var inviteLink = document.getElementById("inviteLink");
   var copyInviteButton = document.getElementById("copyInviteButton");
@@ -522,6 +544,16 @@
     return p.name || p.identity || "Someone";
   }
 
+  var myHandRaised = false;
+  var handSelfActionAt = 0;
+  var muteSelfActionAt = 0;
+  var muteAllSelfAt = 0;
+  var lastMuteAllAt = 0;
+  var joinedAt = 0;
+  function setHandUI() {
+    handButton.textContent = myHandRaised ? "Lower my hand" : "Raise my hand";
+    handButton.setAttribute("aria-pressed", String(myHandRaised));
+  }
   var recordingActive = false;
   var recordingBy = "";
   var myRecordingDelivery = "host";
@@ -533,6 +565,8 @@
     recordButton.textContent = recordingActive ? "Stop recording" : "Start recording";
     recordControls.hidden = !(iAmHost || iAmCohost);
     deliverySettings.hidden = !iAmHost;
+    entrySettings.hidden = !iAmHost;
+    muteAllControls.hidden = !(iAmHost || iAmCohost);
     endForAllButton.hidden = !iAmHost;
   }
   function applyRecordingState(rec) {
@@ -556,6 +590,7 @@
       if (p === room.localParticipant) label += " (you)";
       if (meta.host) label += " (host)";
       if (meta.cohost) label += " (co-host)";
+      if (meta.hand) label += " \u2014 hand raised";
       var micPub = p.getTrackPublication(LivekitClient.Track.Source.Microphone);
       var muted = !micPub || micPub.isMuted;
       label += muted ? " — microphone muted" : " — microphone on";
@@ -582,6 +617,14 @@
         removeBtn.addEventListener("click", function () { moderate("remove", p); });
         li.appendChild(document.createTextNode(" "));
         li.appendChild(removeBtn);
+      }
+      if ((iAmHost || iAmCohost) && p !== room.localParticipant && meta.hand) {
+        var lowerBtn = document.createElement("button");
+        lowerBtn.type = "button";
+        lowerBtn.textContent = "Lower " + displayName(p) + "'s hand";
+        lowerBtn.addEventListener("click", function () { moderate("lowerHand", p); });
+        li.appendChild(document.createTextNode(" "));
+        li.appendChild(lowerBtn);
       }
       if (iAmHost && p !== room.localParticipant && !meta.host) {
         var cohostBtn = document.createElement("button");
@@ -611,7 +654,8 @@
         mute: "You muted " + displayName(participant) + ".",
         remove: "You removed " + displayName(participant) + " from the room.",
         promote: displayName(participant) + " is now a co-host.",
-        demote: displayName(participant) + " is no longer a co-host."
+        demote: displayName(participant) + " is no longer a co-host.",
+        lowerHand: "You lowered " + displayName(participant) + "'s hand."
       };
       announce(msgs[action] || "Done.");
       renderParticipants();
@@ -733,8 +777,22 @@ joinForm.addEventListener("submit", function (ev) {
         renderParticipants();
       })
       .on(LK.RoomEvent.ParticipantMetadataChanged, function (prevMeta, p) {
+        var prevObj = {};
+        try { prevObj = prevMeta ? JSON.parse(prevMeta) : {}; } catch (e) {}
+        var curObj = parseMetadata(p);
+        if (!!curObj.hand !== !!prevObj.hand) {
+          if (p === room.localParticipant) {
+            myHandRaised = !!curObj.hand;
+            setHandUI();
+            if (!curObj.hand && Date.now() - handSelfActionAt > 2500) announce("Your hand has been lowered.");
+          } else if (curObj.hand) {
+            announce(displayName(p) + "'s hand is raised.");
+          } else {
+            announce(displayName(p) + "'s hand is lowered.");
+          }
+        }
         if (p === room.localParticipant) {
-          var nowMeta = parseMetadata(p);
+          var nowMeta = curObj;
           if (nowMeta.cohost && !iAmCohost) {
             iAmCohost = true;
             announce("You are now a co-host of this room. You can mute or remove people if needed.");
@@ -745,8 +803,25 @@ joinForm.addEventListener("submit", function (ev) {
         }
         renderParticipants();
       })
-      .on(LK.RoomEvent.TrackMuted, function (pub, p) { renderParticipants(); })
-      .on(LK.RoomEvent.TrackUnmuted, function (pub, p) { renderParticipants(); })
+      .on(LK.RoomEvent.TrackMuted, function (pub, p) {
+        if (p === room.localParticipant && pub && pub.source === LK.Track.Source.Microphone) {
+          muteButton.textContent = "Unmute my microphone";
+          muteButton.setAttribute("aria-pressed", "true");
+          if (Date.now() - muteSelfActionAt > 2500 && Date.now() - lastMuteAllAt > 2500) {
+            announce(Date.now() - joinedAt < 8000
+              ? "You joined with your microphone muted. You can unmute yourself whenever you are ready."
+              : "Your microphone has been muted.");
+          }
+        }
+        renderParticipants();
+      })
+      .on(LK.RoomEvent.TrackUnmuted, function (pub, p) {
+        if (p === room.localParticipant && pub && pub.source === LK.Track.Source.Microphone) {
+          muteButton.textContent = "Mute my microphone";
+          muteButton.setAttribute("aria-pressed", "false");
+        }
+        renderParticipants();
+      })
       .on(LK.RoomEvent.ActiveSpeakersChanged, function (speakers) {
         speakingIds = {};
         speakers.forEach(function (p) { speakingIds[p.identity] = true; });
@@ -779,6 +854,9 @@ joinForm.addEventListener("submit", function (ev) {
               announce("The recording has been saved and emailed.");
             }
             setRecordingUI();
+          } else if (msg.type === "mute-all") {
+            lastMuteAllAt = Date.now();
+            if (Date.now() - muteAllSelfAt > 3000) announce((msg.by || "The host") + " muted everyone's microphones.");
           } else if (msg.type === "room-ended") {
             announce("The host has ended the meeting for everyone.");
           }
@@ -793,10 +871,12 @@ joinForm.addEventListener("submit", function (ev) {
 
     return room.connect(data.url || LIVEKIT_URL, data.token).then(function () {
       roomHeading.textContent = "Room: " + fmtNum(roomName);
+      joinedAt = Date.now();
       setStatus("Connected to " + fmtNum(roomName) + " as " + myName + (iAmHost ? " (you are the host)" : (iAmCohost ? " (you are a co-host)" : "")) + ".");
       if (iAmHost) {
         var sel = document.querySelector('input[name="recDelivery"][value="' + myRecordingDelivery + '"]');
         if (sel) sel.checked = true;
+        muteOnEntryBox.checked = !!data.muteOnEntry;
       }
       applyRecordingState(pendingRecording);
       if (pendingRecording && pendingRecording.active) announce("This meeting is being recorded. " + (pendingRecording.by || "The host") + " started the recording before you joined.");
@@ -835,6 +915,7 @@ joinForm.addEventListener("submit", function (ev) {
   }
 
   muteButton.addEventListener("click", function () {
+    muteSelfActionAt = Date.now();
     if (!room) return;
     var willMute = !(muteButton.getAttribute("aria-pressed") === "true");
     room.localParticipant.setMicrophoneEnabled(!willMute).then(function () {
@@ -885,10 +966,10 @@ joinForm.addEventListener("submit", function (ev) {
       if (!radio.checked || !room || !myToken) return;
       myRecordingDelivery = radio.value;
       setRecordingUI();
-      fetch(TOKEN_ENDPOINT + "/recording-delivery", {
+      fetch(TOKEN_ENDPOINT + "/room-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": "Bearer " + myToken },
-        body: JSON.stringify({ room: roomName, delivery: radio.value })
+        body: JSON.stringify({ room: roomName, recordingDelivery: radio.value })
       }).then(function (res) {
         announce(res.ok ? "Recordings from this room will be emailed to " + deliveryWords[radio.value] + "." : "That setting did not save.");
       }).catch(function () { announce("That setting did not save."); });
@@ -924,6 +1005,76 @@ joinForm.addEventListener("submit", function (ev) {
       endForAllButton.textContent = "End meeting for everyone";
       announce("Ending the meeting did not go through. Please try again.");
     });
+  });
+
+  handButton.addEventListener("click", function () {
+    if (!room || !myToken) return;
+    var action = myHandRaised ? "lower" : "raise";
+    handSelfActionAt = Date.now();
+    handButton.disabled = true;
+    fetch(TOKEN_ENDPOINT + "/hand", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + myToken },
+      body: JSON.stringify({ action: action, room: roomName })
+    }).then(function (res) {
+      handButton.disabled = false;
+      if (!res.ok) { announce("That did not go through. Please try again."); return; }
+      myHandRaised = action === "raise";
+      setHandUI();
+      announce(myHandRaised ? "You raised your hand." : "You lowered your hand.");
+    }).catch(function () {
+      handButton.disabled = false;
+      announce("That did not go through. Please try again.");
+    });
+  });
+
+  muteAllButton.addEventListener("click", function () {
+    if (!room || !myToken) return;
+    muteAllSelfAt = Date.now();
+    muteAllButton.disabled = true;
+    fetch(TOKEN_ENDPOINT + "/moderate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + myToken },
+      body: JSON.stringify({ action: "muteAll", room: roomName })
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        muteAllButton.disabled = false;
+        if (!res.ok) { announce(data.error || "Mute everyone did not go through."); return; }
+        var n = data.muted || 0;
+        announce(n === 0 ? "There was no one to mute." : "You muted " + n + (n === 1 ? " person's" : " people's") + " microphones.");
+      });
+    }).catch(function () {
+      muteAllButton.disabled = false;
+      announce("Mute everyone did not go through. Please try again.");
+    });
+  });
+
+  muteOnEntryBox.addEventListener("change", function () {
+    if (!room || !myToken) return;
+    fetch(TOKEN_ENDPOINT + "/room-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + myToken },
+      body: JSON.stringify({ room: roomName, muteOnEntry: muteOnEntryBox.checked })
+    }).then(function (res) {
+      announce(res.ok
+        ? (muteOnEntryBox.checked ? "People will now join this room with their microphones muted." : "People will now join this room with their microphones on.")
+        : "That setting did not save.");
+    }).catch(function () { announce("That setting did not save."); });
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (!room || roomView.hidden) return;
+    var tag = (e.target && e.target.tagName) || "";
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    var key = (e.key || "").toLowerCase();
+    if (e.ctrlKey || e.shiftKey) return;
+    var mod = e.altKey || (e.metaKey && (key === "a" || key === "y"));
+    if (!mod) return;
+    if (key === "y") { e.preventDefault(); handButton.click(); }
+    else if (key === "a") { e.preventDefault(); muteButton.click(); }
+    else if (key === "q" && e.altKey) { e.preventDefault(); leaveButton.click(); }
+    else if (key === "m" && e.altKey) { if (!muteAllControls.hidden) { e.preventDefault(); muteAllButton.click(); } }
+    else if (key === "r" && e.altKey) { if (!recordControls.hidden) { e.preventDefault(); recordButton.click(); } }
   });
 
   function showJoinView() {
