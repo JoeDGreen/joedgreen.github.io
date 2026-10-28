@@ -11,6 +11,8 @@
   input[type="text"], input[type="email"], input[type="password"], input[type="date"], input[type="time"], select, textarea { width: 100%; font-size: 1.1rem; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
   fieldset { margin-top: 1rem; }
   fieldset label { font-weight: 400; margin-top: 0.4rem; }
+  .choice { margin-top: 0.5rem; }
+  .choice label { display: inline; font-weight: 400; margin-top: 0; }
   button { font-size: 1.05rem; padding: 0.55rem 1rem; margin: 0.35rem 0.35rem 0.35rem 0; cursor: pointer; }
   button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid #1a73e8; outline-offset: 2px; }
   #joinButton { font-size: 1.2rem; font-weight: 700; }
@@ -93,22 +95,22 @@
       <label for="passcodeInput">Meeting passcode (only if the host set one)</label>
       <input type="text" id="passcodeInput" inputmode="numeric" autocomplete="off">
 
-      <label>
+      <p class="choice">
         <input type="checkbox" id="hostCheckbox">
-        I am creating this room (make me the host)
-      </label>
+        <label for="hostCheckbox">I am creating this room (make me the host)</label>
+      </p>
 
       <div id="hostOptions" hidden>
         <fieldset>
           <legend>Which room are you hosting?</legend>
-          <label>
-            <input type="radio" name="hostKind" value="personal" checked>
-            My personal room — your number is <span id="personalNumberLabel">shown here once you sign in</span>, and it never changes
-          </label>
-          <label>
-            <input type="radio" name="hostKind" value="new">
-            A brand-new room (Aura gives it a fresh 9-digit number)
-          </label>
+          <p class="choice">
+            <input type="radio" id="hostKindPersonal" name="hostKind" value="personal" checked>
+            <label for="hostKindPersonal">My personal room — your number is <span id="personalNumberLabel">shown here once you sign in</span>, and it never changes</label>
+          </p>
+          <p class="choice">
+            <input type="radio" id="hostKindNew" name="hostKind" value="new">
+            <label for="hostKindNew">A brand-new room (Aura gives it a fresh 9-digit number)</label>
+          </p>
         </fieldset>
         <label for="hostPasscode">Passcode for this room (optional — numbers only, 4 to 10 digits). Guests will need it to join.</label>
         <input type="text" id="hostPasscode" inputmode="numeric" autocomplete="off">
@@ -116,16 +118,16 @@
 
       <fieldset>
         <legend>Audio quality</legend>
-        <label>
-          <input type="radio" name="quality" value="talk" checked>
-          Talk — best for conversation. Your microphone uses echo cancelling and noise suppression,
-          and the audio is sent at a clear voice bitrate.
-        </label>
-        <label>
-          <input type="radio" name="quality" value="hifi">
-          High quality — best for music and rich sound. All microphone processing is switched off and
-          the audio is sent in stereo at the highest bitrate. Use headphones in this mode to avoid feedback.
-        </label>
+        <p class="choice">
+          <input type="radio" id="qualityTalk" name="quality" value="talk" checked>
+          <label for="qualityTalk">Talk — best for conversation. Your microphone uses echo cancelling and noise suppression,
+          and the audio is sent at a clear voice bitrate.</label>
+        </p>
+        <p class="choice">
+          <input type="radio" id="qualityHifi" name="quality" value="hifi">
+          <label for="qualityHifi">High quality — best for music and rich sound. All microphone processing is switched off and
+          the audio is sent in stereo at the highest bitrate. Use headphones in this mode to avoid feedback.</label>
+        </p>
       </fieldset>
 
       <button type="submit" id="joinButton">Join the room</button>
