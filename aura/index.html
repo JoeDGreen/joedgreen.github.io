@@ -35,6 +35,10 @@
   <!-- ============ JOIN VIEW ============ -->
   <section id="joinView" aria-labelledby="joinHeading">
     <h2 id="joinHeading">Join or create a room</h2>
+    <div id="inviteBanner" hidden>
+      <h3>You are invited</h3>
+      <p id="inviteBannerText"></p>
+    </div>
     <p id="setupWarning" class="status" role="alert" hidden>
       This copy of Aura is not connected to a meeting server yet.
       It needs a LiveKit server address and token endpoint in its settings before anyone can join.
@@ -332,7 +336,7 @@
       renderPersonalBox();
     }
   }
-  function authCall(path, payload, statusEl, doneText) {
+  function authCall(path, payload, statusEl, doneText, onDone) {
     return fetch(TOKEN_ENDPOINT + path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -346,9 +350,17 @@
       saveSession(data.sessionToken, data.displayName, data.email, data.personalNumber);
       statusEl.textContent = doneText;
       announce(doneText);
+      if (typeof onDone === "function") onDone();
     }).catch(function (err) {
       statusEl.textContent = err.message;
     });
+  }
+  function joinPendingInvite() {
+    if (!window.__pendingInviteRoom) return;
+    hostCheckbox.checked = false;
+    document.getElementById("hostOptions").hidden = true;
+    joinStatus.textContent = "Joining the meeting you were invited to\u2026";
+    joinForm.requestSubmit();
   }
   loginForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
@@ -356,7 +368,7 @@
     authCall("/auth/login", {
       email: document.getElementById("loginEmail").value.trim(),
       password: document.getElementById("loginPassword").value
-    }, loginStatus, "You are signed in.");
+    }, loginStatus, "You are signed in.", joinPendingInvite);
   });
   registerForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
@@ -365,7 +377,7 @@
       displayName: document.getElementById("regName").value.trim(),
       email: document.getElementById("regEmail").value.trim(),
       password: document.getElementById("regPassword").value
-    }, registerStatus, "Your account is ready and you are signed in.");
+    }, registerStatus, "Your account is ready and you are signed in.", joinPendingInvite);
   });
   document.getElementById("signOutButton").addEventListener("click", function () {
     clearSession();
@@ -463,6 +475,16 @@
   if (roomFromLink) { roomInput.value = roomFromLink; }
   var pcFromLink = params.get("p");
   if (pcFromLink) { document.getElementById("passcodeInput").value = pcFromLink; }
+  if (roomFromLink) {
+    window.__pendingInviteRoom = roomFromLink;
+    document.getElementById("inviteBannerText").textContent = "You have been invited to meeting "
+      + fmtNum(roomFromLink) + ". To join, just type your name in the form below and tap "
+      + "\u201CJoin the room\u201D \u2014 no account needed. Or create an account below "
+      + "(or sign in) and we will bring you straight into the meeting.";
+    document.getElementById("inviteBanner").hidden = false;
+    var regBtn = registerForm.querySelector('button[type="submit"]');
+    if (regBtn) regBtn.textContent = "Create account and join the meeting";
+  }
   hostCheckbox.addEventListener("change", function () {
     document.getElementById("hostOptions").hidden = !hostCheckbox.checked;
   });
