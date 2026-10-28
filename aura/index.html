@@ -70,6 +70,14 @@
         <p id="signedInText" class="status"></p>
         <p><button type="button" id="signOutButton">Sign out</button></p>
       </div>
+      <div id="personalRoomBox" hidden>
+        <h3>Your personal room</h3>
+        <p>Your number is <strong id="personalNumberBig"></strong>. It is tied to your
+        account and never changes, so you never have to type it.</p>
+        <p><button type="button" id="hostPersonalButton">Host my personal room</button>
+        <button type="button" id="copyPersonalLinkButton">Copy my invite link</button></p>
+        <p id="personalRoomStatus" class="status" role="status"></p>
+      </div>
     </section>
 
     <form id="joinForm">
@@ -77,9 +85,10 @@
       <input type="text" id="nameInput" name="name" autocomplete="name" required>
 
       <label for="roomInput">Meeting number (or an older room name)</label>
-      <input type="text" id="roomInput" name="room" inputmode="numeric" required>
-      <p class="hint">Type the meeting's 9-digit number — spaces are fine. Whoever creates a room
-      is its host. The host can mute or remove people in that room.</p>
+      <input type="text" id="roomInput" name="room" inputmode="numeric">
+      <p class="hint">Only needed when you are joining someone else's meeting: type its
+      9-digit number — spaces are fine. Hosting your own personal room? Use the
+      "Host my personal room" button above instead; no typing needed.</p>
 
       <label for="passcodeInput">Meeting passcode (only if the host set one)</label>
       <input type="text" id="passcodeInput" inputmode="numeric" autocomplete="off">
@@ -279,7 +288,15 @@
   }
   function fmtNum(n) { return /^\d{9}$/.test(n) ? n.slice(0, 3) + " " + n.slice(3, 6) + " " + n.slice(6) : n; }
   var personalPasscode = "";
+  function renderPersonalBox() {
+    var box = document.getElementById("personalRoomBox");
+    if (!box) return;
+    var show = !!(sessionToken && personalNumber);
+    box.hidden = !show;
+    if (show) document.getElementById("personalNumberBig").textContent = fmtNum(personalNumber);
+  }
   function updatePersonalLabels() {
+    renderPersonalBox();
     if (!personalNumber) return;
     var lbl = document.getElementById("personalNumberLabel");
     if (lbl) lbl.textContent = fmtNum(personalNumber);
@@ -304,11 +321,13 @@
       loadMeetings();
       fetchSessionInfo();
       updatePersonalLabels();
+      renderPersonalBox();
     } else {
       signedOutBox.hidden = false;
       signedInBox.hidden = true;
       nameInput.readOnly = false;
       scheduleBox.hidden = true;
+      renderPersonalBox();
     }
   }
   function authCall(path, payload, statusEl, doneText) {
@@ -544,7 +563,27 @@
   }
 
   var joinedPasscode = "";
-  joinForm.addEventListener("submit", function (ev) {
+    document.getElementById("hostPersonalButton").addEventListener("click", function () {
+    var st = document.getElementById("personalRoomStatus");
+    if (!sessionToken) { st.textContent = "Sign in first, at the top of the page."; return; }
+    if (!personalNumber) { st.textContent = "Your personal number is still loading \u2014 give it a second and try again."; return; }
+    hostCheckbox.checked = true;
+    document.getElementById("hostOptions").hidden = false;
+    var pr = document.querySelector('input[name="hostKind"][value="personal"]');
+    if (pr) pr.checked = true;
+    st.textContent = "Opening your personal room\u2026";
+    joinForm.requestSubmit();
+  });
+  document.getElementById("copyPersonalLinkButton").addEventListener("click", function () {
+    var st = document.getElementById("personalRoomStatus");
+    if (!personalNumber) { st.textContent = "Your personal number is still loading \u2014 give it a second and try again."; return; }
+    var link = window.location.origin + window.location.pathname + "?room=" + encodeURIComponent(personalNumber) + (personalPasscode ? "&p=" + encodeURIComponent(personalPasscode) : "");
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(function () { st.textContent = "Invite link copied: " + link; }, function () { st.textContent = "Here is your invite link: " + link; });
+    } else { st.textContent = "Here is your invite link: " + link; }
+  });
+
+joinForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
     myName = nameInput.value.trim();
     iAmHost = hostCheckbox.checked;
