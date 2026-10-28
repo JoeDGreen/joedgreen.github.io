@@ -76,15 +76,34 @@
       <label for="nameInput">Your name (this is what people in the room will see)</label>
       <input type="text" id="nameInput" name="name" autocomplete="name" required>
 
-      <label for="roomInput">Room name</label>
-      <input type="text" id="roomInput" name="room" required>
-      <p class="hint">Use the name of an existing room to join it, or type a new name to create a room.
-      Whoever creates a room is its host. The host can mute or remove people in that room.</p>
+      <label for="roomInput">Meeting number (or an older room name)</label>
+      <input type="text" id="roomInput" name="room" inputmode="numeric" required>
+      <p class="hint">Type the meeting's 9-digit number — spaces are fine. Whoever creates a room
+      is its host. The host can mute or remove people in that room.</p>
+
+      <label for="passcodeInput">Meeting passcode (only if the host set one)</label>
+      <input type="text" id="passcodeInput" inputmode="numeric" autocomplete="off">
 
       <label>
         <input type="checkbox" id="hostCheckbox">
         I am creating this room (make me the host)
       </label>
+
+      <div id="hostOptions" hidden>
+        <fieldset>
+          <legend>Which room are you hosting?</legend>
+          <label>
+            <input type="radio" name="hostKind" value="personal" checked>
+            My personal room — your number is <span id="personalNumberLabel">shown here once you sign in</span>, and it never changes
+          </label>
+          <label>
+            <input type="radio" name="hostKind" value="new">
+            A brand-new room (Aura gives it a fresh 9-digit number)
+          </label>
+        </fieldset>
+        <label for="hostPasscode">Passcode for this room (optional — numbers only, 4 to 10 digits). Guests will need it to join.</label>
+        <input type="text" id="hostPasscode" inputmode="numeric" autocomplete="off">
+      </div>
 
       <fieldset>
         <legend>Audio quality</legend>
@@ -117,9 +136,9 @@
         <label for="mtgTitle">Meeting title</label>
         <input type="text" id="mtgTitle" required>
 
-        <label for="mtgRoom">Room name (guests land in this room)</label>
-        <input type="text" id="mtgRoom" required>
-        <p class="hint">Tip: use the meeting title as the room name, so the invitation link is easy to recognize.</p>
+        <p class="hint">Every scheduled meeting gets its own fresh 9-digit number, printed
+        in the invitations — your personal number stays yours alone. Set a passcode
+        below if you want this meeting to ask for one.</p>
 
         <label for="mtgDate">Date</label>
         <input type="date" id="mtgDate" required>
@@ -134,6 +153,9 @@
           <option value="90">1 hour 30 minutes</option>
           <option value="120">2 hours</option>
         </select>
+
+        <label for="mtgPasscode">Passcode for this meeting (optional — numbers only, 4 to 10 digits)</label>
+        <input type="text" id="mtgPasscode" inputmode="numeric" autocomplete="off">
 
         <label for="mtgInvitees">Guest email addresses (one per line, or separated by commas)</label>
         <textarea id="mtgInvitees" rows="3" required></textarea>
@@ -216,6 +238,7 @@
   // ---------- Accounts ----------
   // The session token lives in localStorage. The server renews it on use
   // (90-day sliding expiry), so regulars effectively stay signed in.
+  var personalNumber = "";
   var sessionToken = "";
   var accountName = "";
   var accountEmail = "";
@@ -223,6 +246,7 @@
     sessionToken = window.localStorage.getItem("aura_session") || "";
     accountName = window.localStorage.getItem("aura_name") || "";
     accountEmail = window.localStorage.getItem("aura_email") || "";
+    personalNumber = window.localStorage.getItem("aura_pnumber") || "";
   } catch (e) { /* storage unavailable: guest mode only */ }
 
   var signedOutBox = document.getElementById("signedOutBox");
@@ -233,8 +257,9 @@
   var loginStatus = document.getElementById("loginStatus");
   var registerStatus = document.getElementById("registerStatus");
 
-  function saveSession(token, name, email) {
+  function saveSession(token, name, email, pnum) {
     sessionToken = token; accountName = name; accountEmail = email;
+    if (pnum) { personalNumber = pnum; try { window.localStorage.setItem("aura_pnumber", pnum); } catch (e) {} }
     try {
       window.localStorage.setItem("aura_session", token);
       window.localStorage.setItem("aura_name", name);
@@ -243,13 +268,29 @@
     renderAccount();
   }
   function clearSession() {
-    sessionToken = ""; accountName = ""; accountEmail = "";
+    sessionToken = ""; accountName = ""; accountEmail = ""; personalNumber = "";
     try {
       window.localStorage.removeItem("aura_session");
       window.localStorage.removeItem("aura_name");
       window.localStorage.removeItem("aura_email");
+      window.localStorage.removeItem("aura_pnumber");
     } catch (e) { /* non-fatal */ }
     renderAccount();
+  }
+  function fmtNum(n) { return /^\d{9}$/.test(n) ? n.slice(0, 3) + " " + n.slice(3, 6) + " " + n.slice(6) : n; }
+  var personalPasscode = "";
+  function updatePersonalLabels() {
+    if (!personalNumber) return;
+    var lbl = document.getElementById("personalNumberLabel");
+    if (lbl) lbl.textContent = fmtNum(personalNumber);
+    if (sessionToken) signedInText.textContent = "Signed in as " + accountName + " (" + accountEmail + "). You can create and host rooms. Your personal meeting number is " + fmtNum(personalNumber) + "." + (personalPasscode ? " Your room passcode is " + personalPasscode + "." : "");
+  }
+  function fetchSessionInfo() {
+    if (!sessionToken) return;
+    fetch(TOKEN_ENDPOINT + "/session-info", { headers: { "Authorization": "Bearer " + sessionToken } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.personalNumber) { personalNumber = d.personalNumber; personalPasscode = d.personalPasscode || ""; try { window.localStorage.setItem("aura_pnumber", personalNumber); } catch (e) {} updatePersonalLabels(); } })
+      .catch(function () {});
   }
   function renderAccount() {
     var scheduleBox = document.getElementById("scheduleBox");
@@ -261,6 +302,8 @@
       nameInput.readOnly = true;
       scheduleBox.hidden = false;
       loadMeetings();
+      fetchSessionInfo();
+      updatePersonalLabels();
     } else {
       signedOutBox.hidden = false;
       signedInBox.hidden = true;
@@ -279,7 +322,7 @@
         return data;
       });
     }).then(function (data) {
-      saveSession(data.sessionToken, data.displayName, data.email);
+      saveSession(data.sessionToken, data.displayName, data.email, data.personalNumber);
       statusEl.textContent = doneText;
       announce(doneText);
     }).catch(function (err) {
@@ -327,11 +370,12 @@
     meetings.forEach(function (m) {
       var li = document.createElement("li");
       var when = new Date(m.startISO);
-      var text = m.title + " — " + when.toLocaleString() + " — room \"" + m.room + "\" — "
-        + m.invitees.length + (m.invitees.length === 1 ? " guest" : " guests") + " invited. ";
+      var text = m.title + " — " + when.toLocaleString() + " — meeting number " + fmtNum(m.room)
+        + (m.passcode ? " — passcode " + m.passcode : "")
+        + " — " + m.invitees.length + (m.invitees.length === 1 ? " guest" : " guests") + " invited. ";
       li.appendChild(document.createTextNode(text));
       var link = document.createElement("a");
-      link.href = window.location.origin + window.location.pathname + "?room=" + encodeURIComponent(m.room);
+      link.href = window.location.origin + window.location.pathname + "?room=" + encodeURIComponent(m.room) + (m.passcode ? "&p=" + encodeURIComponent(m.passcode) : "");
       link.textContent = "Join link for " + m.title;
       li.appendChild(link);
       li.appendChild(document.createTextNode(" "));
@@ -367,9 +411,9 @@
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionToken },
       body: JSON.stringify({
         title: document.getElementById("mtgTitle").value.trim(),
-        room: document.getElementById("mtgRoom").value.trim(),
         startISO: start.toISOString(),
         durationMin: parseInt(document.getElementById("mtgDuration").value, 10) || 60,
+        passcode: document.getElementById("mtgPasscode").value.trim(),
         invitees: invitees,
         note: document.getElementById("mtgNote").value.trim()
       })
@@ -379,7 +423,7 @@
         return data;
       });
     }).then(function (data) {
-      var msg = "Meeting scheduled.";
+      var msg = "Meeting scheduled." + (data.formattedNumber ? " Its meeting number is " + data.formattedNumber + "." : "");
       if (data.invitationsSent) msg += " Invitations sent to " + data.invitationsSent + (data.invitationsSent === 1 ? " guest." : " guests.");
       if (data.mailWarning) msg += " Note: the invitations could not be emailed (" + data.mailWarning + ") — share the join link yourself from My meetings.";
       scheduleStatus.textContent = msg;
@@ -396,6 +440,11 @@
   var params = new URLSearchParams(window.location.search);
   var roomFromLink = params.get("room");
   if (roomFromLink) { roomInput.value = roomFromLink; }
+  var pcFromLink = params.get("p");
+  if (pcFromLink) { document.getElementById("passcodeInput").value = pcFromLink; }
+  hostCheckbox.addEventListener("change", function () {
+    document.getElementById("hostOptions").hidden = !hostCheckbox.checked;
+  });
 
   if (!TOKEN_ENDPOINT || !LIVEKIT_URL) {
     document.getElementById("setupWarning").hidden = false;
@@ -429,6 +478,8 @@
     if (!room) return;
     var everyone = [room.localParticipant];
     room.remoteParticipants.forEach(function (p) { everyone.push(p); });
+    document.getElementById("participantHeading").textContent =
+      "People in this room (" + everyone.length + (everyone.length === 1 ? " person" : " people") + ")";
     everyone.forEach(function (p) {
       var meta = parseMetadata(p);
       var li = document.createElement("li");
@@ -492,13 +543,15 @@
     });
   }
 
+  var joinedPasscode = "";
   joinForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
     myName = nameInput.value.trim();
-    roomName = roomInput.value.trim();
     iAmHost = hostCheckbox.checked;
     var quality = document.querySelector('input[name="quality"]:checked').value;
-    if (!myName || !roomName) { joinStatus.textContent = "Please enter both your name and a room name."; return; }
+    var guestPasscode = document.getElementById("passcodeInput").value.trim();
+    var hostPasscode = document.getElementById("hostPasscode").value.trim();
+    if (!myName) { joinStatus.textContent = "Please enter your name."; return; }
     if (!TOKEN_ENDPOINT || !LIVEKIT_URL) {
       joinStatus.textContent = "This copy of Aura is not connected to a meeting server yet, so nobody can join. See the setup warning at the top of the page.";
       return;
@@ -509,24 +562,64 @@
       document.getElementById("accountHeading").focus();
       return;
     }
-    joinStatus.textContent = "Connecting to room " + roomName + "…";
-    var url = TOKEN_ENDPOINT + "/token?room=" + encodeURIComponent(roomName)
-      + "&name=" + encodeURIComponent(myName) + (iAmHost ? "&host=1" : "");
-    var fetchOpts = sessionToken ? { headers: { "Authorization": "Bearer " + sessionToken } } : {};
-    fetch(url, fetchOpts)
-      .then(function (res) {
-        if (res.status === 401 && sessionToken) {
-          clearSession();
-          throw new Error("your sign-in had expired. Please sign in again at the top of the page, then join.");
-        }
-        if (!res.ok) throw new Error("token server said " + res.status);
-        return res.json();
-      })
-      .then(function (data) { myToken = data.token; return connect(data); })
-      .then(function () { enableMic(quality); })
-      .catch(function (err) {
-        joinStatus.textContent = "Could not join: " + err.message + ". Check your connection and try again.";
-      });
+
+    function requestToken(roomKey, passcode) {
+      roomName = roomKey;
+      joinedPasscode = passcode || "";
+      joinStatus.textContent = "Connecting to room " + fmtNum(roomKey) + "\u2026";
+      var url = TOKEN_ENDPOINT + "/token?room=" + encodeURIComponent(roomKey)
+        + "&name=" + encodeURIComponent(myName) + (iAmHost ? "&host=1" : "")
+        + (passcode ? "&passcode=" + encodeURIComponent(passcode) : "");
+      var fetchOpts = sessionToken ? { headers: { "Authorization": "Bearer " + sessionToken } } : {};
+      fetch(url, fetchOpts)
+        .then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (data) {
+            if (res.status === 401 && sessionToken) {
+              clearSession();
+              throw new Error("your sign-in had expired. Please sign in again at the top of the page, then join.");
+            }
+            if (!res.ok) { var e = new Error(data.error || ("token server said " + res.status)); e.passcodeRequired = !!data.passcodeRequired; throw e; }
+            return data;
+          });
+        })
+        .then(function (data) { myToken = data.token; return connect(data); })
+        .then(function () { enableMic(quality); })
+        .catch(function (err) {
+          joinStatus.textContent = "Could not join: " + err.message;
+          if (err.passcodeRequired) { document.getElementById("passcodeInput").focus(); }
+        });
+    }
+
+    if (iAmHost) {
+      var kindEl = document.querySelector('input[name="hostKind"]:checked');
+      var kind = kindEl ? kindEl.value : "personal";
+      if (kind === "new") {
+        joinStatus.textContent = "Creating your new room\u2026";
+        fetch(TOKEN_ENDPOINT + "/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionToken },
+          body: JSON.stringify({ title: "", passcode: hostPasscode })
+        }).then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (data) {
+            if (!res.ok) throw new Error(data.error || ("server said " + res.status));
+            return data;
+          });
+        }).then(function (data) {
+          announce("Your new room number is " + data.formattedNumber + ".");
+          requestToken(data.number, hostPasscode);
+        }).catch(function (err) {
+          joinStatus.textContent = "Could not create the room: " + err.message;
+        });
+      } else if (personalNumber) {
+        requestToken(personalNumber, hostPasscode);
+      } else {
+        joinStatus.textContent = "Your personal number is still loading — give it a second and try again, or choose a brand-new room.";
+      }
+    } else {
+      var typed = roomInput.value.trim();
+      if (!typed) { joinStatus.textContent = "Type the meeting number from your invitation."; return; }
+      requestToken(typed, guestPasscode);
+    }
   });
 
   function connect(data) {
@@ -577,16 +670,16 @@
       });
 
     return room.connect(data.url || LIVEKIT_URL, data.token).then(function () {
-      roomHeading.textContent = "Room: " + roomName;
-      setStatus("Connected to " + roomName + " as " + myName + (iAmHost ? " (you are the host)" : "") + ".");
-      var link = window.location.origin + window.location.pathname + "?room=" + encodeURIComponent(roomName);
+      roomHeading.textContent = "Room: " + fmtNum(roomName);
+      setStatus("Connected to " + fmtNum(roomName) + " as " + myName + (iAmHost ? " (you are the host)" : "") + ".");
+      var link = window.location.origin + window.location.pathname + "?room=" + encodeURIComponent(roomName) + (joinedPasscode ? "&p=" + encodeURIComponent(joinedPasscode) : "");
       inviteLink.href = link;
       inviteLink.textContent = link;
       joinView.hidden = true;
       roomView.hidden = false;
       roomHeading.focus();
       renderParticipants();
-      announce("You are now in room " + roomName + ".");
+      announce("You are now in room " + fmtNum(roomName) + ".");
     });
   }
 
