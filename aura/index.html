@@ -194,6 +194,7 @@
     <p>
       <button type="button" id="muteButton" aria-pressed="false">Mute my microphone</button>
       <button type="button" id="leaveButton">Leave the room</button>
+      <button type="button" id="endForAllButton" hidden>End meeting for everyone</button>
     </p>
 
     <h3>Invite people</h3>
@@ -204,6 +205,17 @@
 
     <h3 id="participantHeading">People in this room</h3>
     <ul id="participantList" aria-labelledby="participantHeading"></ul>
+
+    <h3 id="recordingHeading">Recording</h3>
+    <p id="recordingStatus" role="status">Recording is off.</p>
+    <p id="recordControls" hidden>
+      <button type="button" id="recordButton">Start recording</button>
+    </p>
+    <div id="deliverySettings" hidden>
+      <div class="choice"><input type="radio" id="delHost" name="recDelivery" value="host"> <label for="delHost">Send the finished recording to just me, the host</label></div>
+      <div class="choice"><input type="radio" id="delCohosts" name="recDelivery" value="cohosts"> <label for="delCohosts">Send it to me and the co-hosts</label></div>
+      <div class="choice"><input type="radio" id="delEveryone" name="recDelivery" value="everyone"> <label for="delEveryone">Send it to everyone in the room who has an account</label></div>
+    </div>
 
   </section>
 
@@ -231,6 +243,11 @@
   var roomHeading = document.getElementById("roomHeading");
   var connectionStatus = document.getElementById("connectionStatus");
   var muteButton = document.getElementById("muteButton");
+  var recordButton = document.getElementById("recordButton");
+  var recordControls = document.getElementById("recordControls");
+  var recordingStatus = document.getElementById("recordingStatus");
+  var deliverySettings = document.getElementById("deliverySettings");
+  var endForAllButton = document.getElementById("endForAllButton");
   var leaveButton = document.getElementById("leaveButton");
   var inviteLink = document.getElementById("inviteLink");
   var copyInviteButton = document.getElementById("copyInviteButton");
@@ -505,7 +522,27 @@
     return p.name || p.identity || "Someone";
   }
 
+  var recordingActive = false;
+  var recordingBy = "";
+  var myRecordingDelivery = "host";
+  var deliveryWords = { host: "the host", cohosts: "the host and the co-hosts", everyone: "everyone in the room who has an account" };
+  function setRecordingUI() {
+    recordingStatus.textContent = recordingActive
+      ? "Recording is ON. " + recordingBy + " started it, and everyone in this room can see that it is being recorded. It will be emailed to " + (deliveryWords[myRecordingDelivery] || "the host") + "."
+      : "Recording is off.";
+    recordButton.textContent = recordingActive ? "Stop recording" : "Start recording";
+    recordControls.hidden = !(iAmHost || iAmCohost);
+    deliverySettings.hidden = !iAmHost;
+    endForAllButton.hidden = !iAmHost;
+  }
+  function applyRecordingState(rec) {
+    if (rec && rec.active) { recordingActive = true; recordingBy = rec.by || "The host"; }
+    else { recordingActive = false; recordingBy = ""; }
+    setRecordingUI();
+  }
+
   function renderParticipants() {
+    setRecordingUI();
     participantList.innerHTML = "";
     if (!room) return;
     var everyone = [room.localParticipant];
@@ -583,6 +620,7 @@
     });
   }
 
+  var pendingRecording = null;
   var joinedPasscode = "";
     document.getElementById("hostPersonalButton").addEventListener("click", function () {
     var st = document.getElementById("personalRoomStatus");
@@ -642,7 +680,7 @@ joinForm.addEventListener("submit", function (ev) {
             return data;
           });
         })
-        .then(function (data) { myToken = data.token; iAmHost = !!data.host; iAmCohost = !!data.cohost; return connect(data); })
+        .then(function (data) { myToken = data.token; iAmHost = !!data.host; iAmCohost = !!data.cohost; if (data.recordingDelivery) { myRecordingDelivery = data.recordingDelivery; } pendingRecording = data.recording || null; return connect(data); })
         .then(function () { enableMic(quality); })
         .catch(function (err) {
           joinStatus.textContent = "Could not join: " + err.message;
@@ -726,7 +764,28 @@ joinForm.addEventListener("submit", function (ev) {
         track.detach().forEach(function (el) { el.remove(); });
         renderParticipants();
       })
+      .on(LK.RoomEvent.DataReceived, function (payload) {
+        try {
+          var msg = JSON.parse(new TextDecoder().decode(payload));
+          if (msg.type === "recording") {
+            if (msg.state === "started") {
+              recordingActive = true; recordingBy = msg.by || "The host";
+              if (msg.delivery) myRecordingDelivery = msg.delivery;
+              announce("Recording started by " + recordingBy + ". This meeting is being recorded. The recording will be emailed to " + (deliveryWords[myRecordingDelivery] || "the host") + " when it is finished.");
+            } else if (msg.state === "stopped") {
+              recordingActive = false; recordingBy = "";
+              announce("Recording stopped by " + (msg.by || "the host") + ". The recording will be emailed to " + (deliveryWords[msg.delivery || myRecordingDelivery] || "the host") + ".");
+            } else if (msg.state === "saved") {
+              announce("The recording has been saved and emailed.");
+            }
+            setRecordingUI();
+          } else if (msg.type === "room-ended") {
+            announce("The host has ended the meeting for everyone.");
+          }
+        } catch (e) { /* ignore non-recording data */ }
+      })
       .on(LK.RoomEvent.Disconnected, function () {
+        recordingActive = false; recordingBy = ""; setRecordingUI();
         setStatus("Disconnected.");
         announce("You have left the room.");
         showJoinView();
@@ -735,6 +794,13 @@ joinForm.addEventListener("submit", function (ev) {
     return room.connect(data.url || LIVEKIT_URL, data.token).then(function () {
       roomHeading.textContent = "Room: " + fmtNum(roomName);
       setStatus("Connected to " + fmtNum(roomName) + " as " + myName + (iAmHost ? " (you are the host)" : (iAmCohost ? " (you are a co-host)" : "")) + ".");
+      if (iAmHost) {
+        var sel = document.querySelector('input[name="recDelivery"][value="' + myRecordingDelivery + '"]');
+        if (sel) sel.checked = true;
+      }
+      applyRecordingState(pendingRecording);
+      if (pendingRecording && pendingRecording.active) announce("This meeting is being recorded. " + (pendingRecording.by || "The host") + " started the recording before you joined.");
+      pendingRecording = null;
       var link = window.location.origin + window.location.pathname + "?room=" + encodeURIComponent(roomName) + (joinedPasscode ? "&p=" + encodeURIComponent(joinedPasscode) : "");
       inviteLink.href = link;
       inviteLink.textContent = link;
@@ -790,6 +856,74 @@ joinForm.addEventListener("submit", function (ev) {
     } else {
       announce("Copy this link: " + link);
     }
+  });
+
+  recordButton.addEventListener("click", function () {
+    if (!room || !myToken) return;
+    var action = recordingActive ? "stop" : "start";
+    recordButton.disabled = true;
+    fetch(TOKEN_ENDPOINT + "/recording", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + myToken },
+      body: JSON.stringify({ action: action, room: roomName })
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        recordButton.disabled = false;
+        if (!res.ok) { announce(data.error || "That recording action did not go through."); return; }
+        if (action === "start") { recordingActive = true; recordingBy = myName; }
+        else { recordingActive = false; recordingBy = ""; }
+        setRecordingUI();
+      });
+    }).catch(function () {
+      recordButton.disabled = false;
+      announce("That recording action did not go through. Please try again.");
+    });
+  });
+
+  document.querySelectorAll('input[name="recDelivery"]').forEach(function (radio) {
+    radio.addEventListener("change", function () {
+      if (!radio.checked || !room || !myToken) return;
+      myRecordingDelivery = radio.value;
+      setRecordingUI();
+      fetch(TOKEN_ENDPOINT + "/recording-delivery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + myToken },
+        body: JSON.stringify({ room: roomName, delivery: radio.value })
+      }).then(function (res) {
+        announce(res.ok ? "Recordings from this room will be emailed to " + deliveryWords[radio.value] + "." : "That setting did not save.");
+      }).catch(function () { announce("That setting did not save."); });
+    });
+  });
+
+  var endArmed = false, endArmTimer = null;
+  endForAllButton.addEventListener("click", function () {
+    if (!endArmed) {
+      endArmed = true;
+      endForAllButton.textContent = "Tap again to confirm: end the meeting for everyone";
+      announce("Tap the button again to end the meeting for everyone in the room.");
+      endArmTimer = window.setTimeout(function () {
+        endArmed = false;
+        endForAllButton.textContent = "End meeting for everyone";
+      }, 10000);
+      return;
+    }
+    window.clearTimeout(endArmTimer);
+    endArmed = false;
+    endForAllButton.textContent = "Ending\u2026";
+    endForAllButton.disabled = true;
+    fetch(TOKEN_ENDPOINT + "/moderate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + myToken },
+      body: JSON.stringify({ action: "end", room: roomName })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("end failed");
+      announce("You ended the meeting for everyone.");
+      if (room) room.disconnect();
+    }).catch(function () {
+      endForAllButton.disabled = false;
+      endForAllButton.textContent = "End meeting for everyone";
+      announce("Ending the meeting did not go through. Please try again.");
+    });
   });
 
   function showJoinView() {
