@@ -8,7 +8,7 @@
   body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 44rem; padding: 1rem; line-height: 1.5; }
   h1, h2 { line-height: 1.25; }
   label { display: block; font-weight: 600; margin-top: 1rem; }
-  input[type="text"], input[type="email"], input[type="password"] { width: 100%; font-size: 1.1rem; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
+  input[type="text"], input[type="email"], input[type="password"], input[type="date"], input[type="time"], select, textarea { width: 100%; font-size: 1.1rem; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
   fieldset { margin-top: 1rem; }
   fieldset label { font-weight: 400; margin-top: 0.4rem; }
   button { font-size: 1.05rem; padding: 0.55rem 1rem; margin: 0.35rem 0.35rem 0.35rem 0; cursor: pointer; }
@@ -103,6 +103,52 @@
       <button type="submit" id="joinButton">Join the room</button>
     </form>
     <p id="joinStatus" class="status" role="status"></p>
+    <p id="insecureWarning" class="status" role="alert" hidden>
+      You are on the non-secure copy of this page (its address starts with http, not https).
+      Browsers will not switch on your microphone here. Please use the secure address instead:
+      https://joedgreen.github.io/aura/
+    </p>
+
+    <div id="scheduleBox" hidden>
+      <h3 id="scheduleHeading">Schedule a meeting</h3>
+      <p>Plan ahead: Aura emails each guest an invitation with the join link and a calendar
+      file they can add to their calendar in one tap. Guests never need an account.</p>
+      <form id="scheduleForm">
+        <label for="mtgTitle">Meeting title</label>
+        <input type="text" id="mtgTitle" required>
+
+        <label for="mtgRoom">Room name (guests land in this room)</label>
+        <input type="text" id="mtgRoom" required>
+        <p class="hint">Tip: use the meeting title as the room name, so the invitation link is easy to recognize.</p>
+
+        <label for="mtgDate">Date</label>
+        <input type="date" id="mtgDate" required>
+
+        <label for="mtgTime">Start time (your local time)</label>
+        <input type="time" id="mtgTime" required>
+
+        <label for="mtgDuration">Length</label>
+        <select id="mtgDuration">
+          <option value="30">30 minutes</option>
+          <option value="60" selected>1 hour</option>
+          <option value="90">1 hour 30 minutes</option>
+          <option value="120">2 hours</option>
+        </select>
+
+        <label for="mtgInvitees">Guest email addresses (one per line, or separated by commas)</label>
+        <textarea id="mtgInvitees" rows="3" required></textarea>
+
+        <label for="mtgNote">Note for your guests (optional)</label>
+        <input type="text" id="mtgNote">
+
+        <button type="submit">Schedule and send invitations</button>
+        <p id="scheduleStatus" class="status" role="status"></p>
+      </form>
+
+      <h3 id="myMeetingsHeading">My meetings</h3>
+      <ul id="meetingsList" aria-labelledby="myMeetingsHeading"></ul>
+      <p id="noMeetings" class="hint">No meetings scheduled yet.</p>
+    </div>
   </section>
 
   <!-- ============ ROOM VIEW ============ -->
@@ -206,16 +252,20 @@
     renderAccount();
   }
   function renderAccount() {
+    var scheduleBox = document.getElementById("scheduleBox");
     if (sessionToken) {
       signedOutBox.hidden = true;
       signedInBox.hidden = false;
       signedInText.textContent = "Signed in as " + accountName + " (" + accountEmail + "). You can create and host rooms.";
       nameInput.value = accountName;
       nameInput.readOnly = true;
+      scheduleBox.hidden = false;
+      loadMeetings();
     } else {
       signedOutBox.hidden = false;
       signedInBox.hidden = true;
       nameInput.readOnly = false;
+      scheduleBox.hidden = true;
     }
   }
   function authCall(path, payload, statusEl, doneText) {
@@ -257,6 +307,89 @@
     clearSession();
     announce("You are signed out. You can still join rooms as a guest.");
   });
+
+  // ---------- Scheduling ----------
+  var scheduleForm = document.getElementById("scheduleForm");
+  var scheduleStatus = document.getElementById("scheduleStatus");
+  var meetingsList = document.getElementById("meetingsList");
+  var noMeetings = document.getElementById("noMeetings");
+
+  function loadMeetings() {
+    if (!sessionToken) return;
+    fetch(TOKEN_ENDPOINT + "/meetings", { headers: { "Authorization": "Bearer " + sessionToken } })
+      .then(function (res) { if (!res.ok) throw new Error("server said " + res.status); return res.json(); })
+      .then(function (data) { renderMeetings(data.meetings || []); })
+      .catch(function () { /* list is a convenience; failures stay quiet */ });
+  }
+  function renderMeetings(meetings) {
+    meetingsList.innerHTML = "";
+    noMeetings.hidden = meetings.length > 0;
+    meetings.forEach(function (m) {
+      var li = document.createElement("li");
+      var when = new Date(m.startISO);
+      var text = m.title + " — " + when.toLocaleString() + " — room \"" + m.room + "\" — "
+        + m.invitees.length + (m.invitees.length === 1 ? " guest" : " guests") + " invited. ";
+      li.appendChild(document.createTextNode(text));
+      var link = document.createElement("a");
+      link.href = window.location.origin + window.location.pathname + "?room=" + encodeURIComponent(m.room);
+      link.textContent = "Join link for " + m.title;
+      li.appendChild(link);
+      li.appendChild(document.createTextNode(" "));
+      var cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.textContent = "Cancel " + m.title;
+      cancelBtn.addEventListener("click", function () {
+        if (!window.confirm("Cancel \"" + m.title + "\" and email the guests that it is cancelled?")) return;
+        fetch(TOKEN_ENDPOINT + "/meetings/" + m.id, {
+          method: "DELETE",
+          headers: { "Authorization": "Bearer " + sessionToken }
+        }).then(function (res) {
+          if (!res.ok) throw new Error("server said " + res.status);
+          announce("Meeting cancelled and guests emailed.");
+          loadMeetings();
+        }).catch(function () { announce("That cancellation did not go through. Try again."); });
+      });
+      li.appendChild(cancelBtn);
+      meetingsList.appendChild(li);
+    });
+  }
+  scheduleForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var dateVal = document.getElementById("mtgDate").value;
+    var timeVal = document.getElementById("mtgTime").value;
+    if (!dateVal || !timeVal) { scheduleStatus.textContent = "Pick a date and a start time."; return; }
+    var start = new Date(dateVal + "T" + timeVal);
+    if (isNaN(start.getTime())) { scheduleStatus.textContent = "That date and time do not look right."; return; }
+    var invitees = document.getElementById("mtgInvitees").value.split(/[\n,;]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+    scheduleStatus.textContent = "Scheduling and sending invitations…";
+    fetch(TOKEN_ENDPOINT + "/meetings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionToken },
+      body: JSON.stringify({
+        title: document.getElementById("mtgTitle").value.trim(),
+        room: document.getElementById("mtgRoom").value.trim(),
+        startISO: start.toISOString(),
+        durationMin: parseInt(document.getElementById("mtgDuration").value, 10) || 60,
+        invitees: invitees,
+        note: document.getElementById("mtgNote").value.trim()
+      })
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) throw new Error(data.error || ("server said " + res.status));
+        return data;
+      });
+    }).then(function (data) {
+      var msg = "Meeting scheduled.";
+      if (data.invitationsSent) msg += " Invitations sent to " + data.invitationsSent + (data.invitationsSent === 1 ? " guest." : " guests.");
+      if (data.mailWarning) msg += " Note: the invitations could not be emailed (" + data.mailWarning + ") — share the join link yourself from My meetings.";
+      scheduleStatus.textContent = msg;
+      announce(msg);
+      scheduleForm.reset();
+      loadMeetings();
+    }).catch(function (err) {
+      scheduleStatus.textContent = "Could not schedule: " + err.message;
+    });
+  });
   renderAccount();
 
   // If arriving from an invite link (?room=Name), prefill the room name.
@@ -266,6 +399,9 @@
 
   if (!TOKEN_ENDPOINT || !LIVEKIT_URL) {
     document.getElementById("setupWarning").hidden = false;
+  }
+  if (window.location.protocol === "http:") {
+    document.getElementById("insecureWarning").hidden = false;
   }
 
   var room = null;          // LiveKit Room
