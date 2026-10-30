@@ -25,6 +25,9 @@
   h2 { font-size: 1.5rem; color: var(--green-dark); margin: 2.25rem 0 0.5rem; }
   .card { background: var(--wash); border-left: 5px solid var(--green); padding: 1rem 1.25rem; margin: 1rem 0; }
   .badge { display: inline-block; background: var(--green); color: #fff; font-weight: 700; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.9rem; }
+  .livebtn { font: inherit; font-size: 1.1rem; font-weight: 700; padding: 0.7rem 1.6rem; border: 0; border-radius: 999px; background: var(--green); color: #fff; cursor: pointer; }
+  .livebtn[disabled] { background: #8a8a8a; cursor: not-allowed; }
+  .livebtn:focus-visible { outline: 3px solid var(--green-dark); outline-offset: 2px; }
   footer { border-top: 2px solid var(--green); margin-top: 3rem; padding-top: 1rem; font-size: 0.95rem; }
 </style>
 </head>
@@ -40,6 +43,7 @@
     <ul>
       <li><a href="#about">About</a></li>
       <li><a href="#access-granted">Access Granted</a></li>
+      <li><a href="#listen-live">Listen Live</a></li>
       <li><a href="#radio">The Joe Green Radio Show</a></li>
       <li><a href="#contact">Contact</a></li>
     </ul>
@@ -48,6 +52,16 @@
   <main id="main">
     <h1>Welcome to JDG Productions</h1>
     <p>JDG Productions is the creative home of <strong>Joe D Green</strong> — a blind creator building with AI, testing assistive technology hands-on, mixing as a DJ, and sharing honest verdicts about what works and what doesn't.</p>
+
+    <h2 id="listen-live">Listen Live</h2>
+    <div class="card">
+      <p><span class="badge">Live from Aura Studio</span></p>
+      <p>Joe broadcasts live from <strong>Aura Studio</strong> — his own accessible recording studio. <strong>Vision Wire</strong>, the blindness community's news wire, and other JDG Productions shows go out live right here. When a show is on air, its name appears below and the Listen Live button plays it, in this page. Nothing to install, and no account to make.</p>
+      <p id="liveStatus">Nothing is on air right now. When a live show starts, its name will appear here and the Listen Live button below will play it.</p>
+      <p><button type="button" id="listenLiveButton" class="livebtn" aria-pressed="false" disabled>Listen Live</button></p>
+      <audio id="liveAudio" preload="none" src="https://aura.joedgreen.com/live"></audio>
+      <p>The button is a standard play and stop button. It works with JAWS, NVDA, VoiceOver, and the keyboard — while a show is playing, it reads "Stop listening". Between live shows, you can hear every recorded episode at <a href="https://vision-wire.pinecast.co">Vision Wire on Pinecast</a>.</p>
+    </div>
 
     <h2 id="about">About Joe</h2>
     <p>Joe is a director on the board of the California Council of the Blind, a hobbyist DJ, an amateur radio student, and a lifelong technology enthusiast. Everything under JDG Productions comes from first-hand experience: the tools he builds with, the gear on his desk, the apps that pass — and fail — his screen reader tests. If it is on this site, he has tried it himself.</p>
@@ -78,5 +92,81 @@
     <p>This site is built to be fully usable with a screen reader. If you find a barrier, please <a href="mailto:joe@joegreen.me">tell us</a>.</p>
   </footer>
 </div>
+<script>
+// Listen Live: poll the broadcast status from Aura Studio and keep
+// the section truthful. The status line is plain text updated in
+// place (never a live region — no screen-reader chatter); the button
+// is a real button driving a plain audio element.
+(function () {
+  var statusEl = document.getElementById('liveStatus');
+  var btn = document.getElementById('listenLiveButton');
+  var audio = document.getElementById('liveAudio');
+  if (!statusEl || !btn || !audio) return;
+  var STREAM = 'https://aura.joedgreen.com/live';
+  var STATUS = 'https://aura.joedgreen.com/live-status';
+  var OFF_AIR_TEXT = statusEl.textContent;
+  var onAir = false, title = '', listeners = 0, playing = false;
+
+  function render() {
+    if (onAir) {
+      statusEl.textContent = 'On air now: ' + title + (listeners > 0
+        ? ' — ' + listeners + (listeners === 1 ? ' person is' : ' people are') + ' listening.'
+        : '');
+      btn.disabled = false;
+      if (!playing) { btn.textContent = 'Listen Live'; btn.setAttribute('aria-pressed', 'false'); }
+    } else {
+      if (playing) stopPlayback();
+      statusEl.textContent = OFF_AIR_TEXT;
+      btn.disabled = true;
+      btn.textContent = 'Listen Live';
+      btn.setAttribute('aria-pressed', 'false');
+    }
+  }
+  function stopPlayback() {
+    playing = false;
+    try { audio.pause(); } catch (e) { /* nothing playing */ }
+    audio.removeAttribute('src');
+    try { audio.load(); } catch (e) { /* nothing loaded */ }
+    btn.textContent = 'Listen Live';
+    btn.setAttribute('aria-pressed', 'false');
+  }
+  btn.addEventListener('click', function () {
+    if (!onAir) return;
+    if (playing) { stopPlayback(); return; }
+    if (!audio.getAttribute('src')) audio.setAttribute('src', STREAM);
+    var p = audio.play();
+    if (p && p.catch) p.catch(function () { stopPlayback(); poll(); });
+  });
+  audio.addEventListener('playing', function () {
+    playing = true;
+    btn.textContent = 'Stop listening';
+    btn.setAttribute('aria-pressed', 'true');
+  });
+  audio.addEventListener('error', function () { if (playing) { stopPlayback(); poll(); } });
+  audio.addEventListener('ended', function () { if (playing) { stopPlayback(); poll(); } });
+  function poll() {
+    fetch(STATUS, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      var src = j && j.icestats ? j.icestats.source : null;
+      if (Array.isArray(src)) {
+        var found = null;
+        for (var i = 0; i < src.length; i++) {
+          if (String(src[i].listenurl || '').slice(-5) === '/live') { found = src[i]; break; }
+        }
+        src = found;
+      }
+      if (src) {
+        onAir = true;
+        title = src.server_name || src.title || 'Live from Aura Studio';
+        listeners = parseInt(src.listeners || 0, 10) || 0;
+      } else {
+        onAir = false; title = ''; listeners = 0;
+      }
+      render();
+    }).catch(function () { /* a failed poll keeps the last known state */ });
+  }
+  poll();
+  setInterval(poll, 20000);
+})();
+</script>
 </body>
 </html>
