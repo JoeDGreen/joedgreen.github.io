@@ -59,6 +59,7 @@
       <p>Joe broadcasts live from <strong>Aura Studio</strong> — his own accessible recording studio. <strong>Vision Wire</strong>, the blindness community's news wire, and other JDG Productions shows go out live right here. When a show is on air, its name appears below and the Listen Live button plays it, in this page. Nothing to install, and no account to make.</p>
       <p id="liveStatus">Nothing is on air right now. When a live show starts, its name will appear here and the Listen Live button below will play it.</p>
       <p><button type="button" id="listenLiveButton" class="livebtn" aria-pressed="false" disabled>Listen Live</button></p>
+      <p id="liveMixcloudWrap" hidden><a id="liveMixcloudLink" href="https://www.mixcloud.com/joedgreenofficial/">Listen to Joe Green live on Mixcloud</a></p>
       <audio id="liveAudio" preload="none" src="https://aura.joedgreen.com/live"></audio>
       <p>The button is a standard play and stop button. It works with JAWS, NVDA, VoiceOver, and the keyboard — while a show is playing, it reads "Stop listening". Between live shows, you can hear every recorded episode at <a href="https://vision-wire.pinecast.co">Vision Wire on Pinecast</a>.</p>
     </div>
@@ -101,22 +102,44 @@
   var statusEl = document.getElementById('liveStatus');
   var btn = document.getElementById('listenLiveButton');
   var audio = document.getElementById('liveAudio');
+  var mixWrap = document.getElementById('liveMixcloudWrap');
+  var mixLink = document.getElementById('liveMixcloudLink');
   if (!statusEl || !btn || !audio) return;
   var STREAM = 'https://aura.joedgreen.com/live';
-  var STATUS = 'https://aura.joedgreen.com/live-status';
+  var STATUS = 'https://aura.joedgreen.com/live-display';
+  var MIXCLOUD = 'https://www.mixcloud.com/joedgreenofficial/';
   var OFF_AIR_TEXT = statusEl.textContent;
-  var onAir = false, title = '', listeners = 0, playing = false;
+  var onAir = false, title = '', listeners = 0, playing = false, listenMode = 'player';
 
   function render() {
-    if (onAir) {
+    var mixcloudMode = onAir && listenMode === 'mixcloud-link';
+    if (mixWrap) mixWrap.hidden = !mixcloudMode;
+    if (mixcloudMode) {
+      // Mixcloud-destined show: this page's player must NOT be usable
+      // and must not carry the program audio. Stop anything playing
+      // (the same stop path as everywhere else), disable and hide the
+      // button, and offer the Mixcloud link in its place.
+      stopPlayback();
+      btn.disabled = true;
+      btn.hidden = true;
+      if (mixLink) {
+        mixLink.href = MIXCLOUD;
+        mixLink.textContent = 'Listen to ' + (title || 'Joe Green') + ' live on Mixcloud';
+      }
+      statusEl.textContent = 'On air now: ' + title + ' — this show is live on Mixcloud; tap the link to listen there.' + (listeners > 0
+        ? ' ' + listeners + (listeners === 1 ? ' person is' : ' people are') + ' listening.'
+        : '');
+    } else if (onAir) {
       statusEl.textContent = 'On air now: ' + title + (listeners > 0
         ? ' — ' + listeners + (listeners === 1 ? ' person is' : ' people are') + ' listening.'
         : '');
+      btn.hidden = false;
       btn.disabled = false;
       if (!playing) { btn.textContent = 'Listen Live'; btn.setAttribute('aria-pressed', 'false'); }
     } else {
       if (playing) stopPlayback();
       statusEl.textContent = OFF_AIR_TEXT;
+      btn.hidden = false;
       btn.disabled = true;
       btn.textContent = 'Listen Live';
       btn.setAttribute('aria-pressed', 'false');
@@ -131,7 +154,7 @@
     btn.setAttribute('aria-pressed', 'false');
   }
   btn.addEventListener('click', function () {
-    if (!onAir) return;
+    if (!onAir || listenMode !== 'player') return;
     if (playing) { stopPlayback(); return; }
     if (!audio.getAttribute('src')) audio.setAttribute('src', STREAM);
     var p = audio.play();
@@ -146,20 +169,13 @@
   audio.addEventListener('ended', function () { if (playing) { stopPlayback(); poll(); } });
   function poll() {
     fetch(STATUS, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
-      var src = j && j.icestats ? j.icestats.source : null;
-      if (Array.isArray(src)) {
-        var found = null;
-        for (var i = 0; i < src.length; i++) {
-          if (String(src[i].listenurl || '').slice(-5) === '/live') { found = src[i]; break; }
-        }
-        src = found;
-      }
-      if (src) {
+      if (j && j.onAir) {
         onAir = true;
-        title = src.server_name || src.title || 'Live from Aura Studio';
-        listeners = parseInt(src.listeners || 0, 10) || 0;
+        title = j.title || 'Live from Aura Studio';
+        listeners = parseInt(j.listeners || 0, 10) || 0;
+        listenMode = j.listenMode === 'mixcloud-link' ? 'mixcloud-link' : 'player';
       } else {
-        onAir = false; title = ''; listeners = 0;
+        onAir = false; title = ''; listeners = 0; listenMode = 'player';
       }
       render();
     }).catch(function () { /* a failed poll keeps the last known state */ });
